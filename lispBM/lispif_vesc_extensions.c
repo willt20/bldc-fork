@@ -1900,7 +1900,8 @@ static char *engine_start_param_names[ENGINE_START_PARAM_NUM] = {
 	"stall-current",
 	"stall-duty",
 	"compression-time-ms",
-	"obs-stable-time-ms"
+	"obs-stable-time-ms",
+	"direction"
 };
 static lbm_uint engine_start_param_syms[ENGINE_START_PARAM_NUM];
 
@@ -1959,6 +1960,29 @@ static lbm_value ext_engine_start_active(lbm_value *args, lbm_uint argn) {
 	}
 
 	return mcpwm_foc_engine_start_is_active() ? ENC_SYM_TRUE : ENC_SYM_NIL;
+}
+
+
+static lbm_value ext_engine_start_status(lbm_value *args, lbm_uint argn) {
+	(void)args;
+	if (argn != 0) {
+		return ENC_SYM_EERROR;
+	}
+
+	engine_start_status_t status;
+	if (!mcpwm_foc_engine_start_get_status(&status)) {
+		return ENC_SYM_NIL;
+	}
+
+	lbm_value res = ENC_SYM_NIL;
+	res = lbm_cons(lbm_enc_float(status.iq_target), res);
+	res = lbm_cons(lbm_enc_float(status.blend), res);
+	res = lbm_cons(lbm_enc_float(status.openloop_phase), res);
+	res = lbm_cons(lbm_enc_float(status.openloop_erpm), res);
+	res = lbm_cons(lbm_enc_i(status.retry_count), res);
+	res = lbm_cons(status.active ? ENC_SYM_TRUE : ENC_SYM_NIL, res);
+	res = lbm_cons(lbm_enc_i(status.state), res);
+	return res;
 }
 
 static lbm_value ext_engine_start_param_set(lbm_value *args, lbm_uint argn) {
@@ -6589,6 +6613,7 @@ void lispif_load_vesc_extensions(bool main_found) {
 		lbm_add_extension("engine-start", ext_engine_start);
 		lbm_add_extension("engine-stop", ext_engine_stop);
 		lbm_add_extension("engine-start-active", ext_engine_start_active);
+		lbm_add_extension("engine-status", ext_engine_start_status);
 		lbm_add_extension("engine-param-set", ext_engine_start_param_set);
 		lbm_add_extension("engine-param-get", ext_engine_start_param_get);
 		lbm_add_extension("engine-param-reset", ext_engine_start_param_reset);

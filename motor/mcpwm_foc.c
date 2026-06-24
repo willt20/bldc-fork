@@ -66,6 +66,7 @@
 #define ENGINE_STALL_DUTY          0.12f
 #define ENGINE_COMPRESSION_TIME_MS 50
 #define ENGINE_OBS_STABLE_TIME_MS  100
+#define ENGINE_DIRECTION            1.0f
 
 #if ENGINE_START_ENABLE
 typedef enum {
@@ -102,6 +103,7 @@ typedef struct {
 	float stall_duty;
 	float compression_time_ms;
 	float obs_stable_time_ms;
+	float direction;
 } engine_start_params_t;
 #endif
 
@@ -146,7 +148,8 @@ static engine_start_params_t engine_start_params = {
 	.stall_current = ENGINE_STALL_CURRENT,
 	.stall_duty = ENGINE_STALL_DUTY,
 	.compression_time_ms = ENGINE_COMPRESSION_TIME_MS,
-	.obs_stable_time_ms = ENGINE_OBS_STABLE_TIME_MS
+	.obs_stable_time_ms = ENGINE_OBS_STABLE_TIME_MS,
+	.direction = ENGINE_DIRECTION
 };
 #endif
 
@@ -167,6 +170,7 @@ static bool engine_start_observer_stable(void);
 static void engine_start_set_openloop_current(float iq, float erpm, float dt);
 static void engine_start_stop_output(void);
 static void engine_start_params_load_defaults(void);
+static float engine_start_direction(void);
 #endif
 
 // Threads
@@ -855,6 +859,7 @@ static void engine_start_params_load_defaults(void) {
 	engine_start_params.stall_duty = ENGINE_STALL_DUTY;
 	engine_start_params.compression_time_ms = ENGINE_COMPRESSION_TIME_MS;
 	engine_start_params.obs_stable_time_ms = ENGINE_OBS_STABLE_TIME_MS;
+	engine_start_params.direction = ENGINE_DIRECTION;
 }
 
 static float *engine_start_param_ptr(engine_start_param_id_t param) {
@@ -880,6 +885,7 @@ static float *engine_start_param_ptr(engine_start_param_id_t param) {
 	case ENGINE_START_PARAM_STALL_DUTY: return &engine_start_params.stall_duty;
 	case ENGINE_START_PARAM_COMPRESSION_TIME_MS: return &engine_start_params.compression_time_ms;
 	case ENGINE_START_PARAM_OBS_STABLE_TIME_MS: return &engine_start_params.obs_stable_time_ms;
+	case ENGINE_START_PARAM_DIRECTION: return &engine_start_params.direction;
 	default: return 0;
 	}
 }
@@ -890,6 +896,8 @@ static bool engine_start_param_valid(engine_start_param_id_t param, float value)
 	}
 
 	switch (param) {
+	case ENGINE_START_PARAM_DIRECTION:
+		return fabsf(value) >= 0.5f && fabsf(value) <= 1.0f;
 	case ENGINE_START_PARAM_STALL_DUTY:
 		return value >= 0.0f && value <= 1.0f;
 	case ENGINE_START_PARAM_MAX_RETRY:
@@ -929,6 +937,25 @@ bool mcpwm_foc_engine_start_get_param(engine_start_param_id_t param, float *valu
 
 	*value = *p;
 	return true;
+}
+
+bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
+	if (!status) {
+		return false;
+	}
+
+	status->state = engine_start_state;
+	status->active = engine_start_active;
+	status->retry_count = engine_start_retry_count;
+	status->openloop_erpm = engine_start_openloop_erpm * engine_start_direction();
+	status->openloop_phase = RAD2DEG_f(get_motor_now()->m_openloop_phase);
+	status->blend = engine_start_blend;
+	status->iq_target = engine_start_iq_target;
+	return true;
+}
+
+static float engine_start_direction(void) {
+	return engine_start_params.direction >= 0.0f ? 1.0f : -1.0f;
 }
 
 static void engine_start_reset(void) {
@@ -1005,7 +1032,7 @@ static bool engine_start_observer_stable(void) {
 static void engine_start_set_openloop_current(float iq, float erpm, float dt) {
 	(void)dt;
 	engine_start_iq_target = iq;
-	mcpwm_foc_set_openloop_current(iq, erpm);
+	mcpwm_foc_set_openloop_current(iq, erpm * engine_start_direction());
 }
 
 static void engine_start_enter(engine_start_state_t state) {
@@ -1128,6 +1155,7 @@ bool mcpwm_foc_engine_start_is_active(void) { return false; }
 bool mcpwm_foc_engine_start_set_param(engine_start_param_id_t param, float value) { (void)param; (void)value; return false; }
 bool mcpwm_foc_engine_start_get_param(engine_start_param_id_t param, float *value) { (void)param; (void)value; return false; }
 void mcpwm_foc_engine_start_reset_params(void) {}
+bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) { (void)status; return false; }
 #endif
 
 void mcpwm_foc_set_duty(float dutyCycle) {

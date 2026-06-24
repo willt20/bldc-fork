@@ -1137,7 +1137,27 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 		mc_interface_engine_stop();
 		commands_printf("Engine start stopped");
 	} else if (strcmp(argv[0], "engine_status") == 0) {
-		commands_printf("Engine start active: %s", mcpwm_foc_engine_start_is_active() ? "true" : "false");
+		engine_start_status_t status;
+		if (mcpwm_foc_engine_start_get_status(&status)) {
+			static const char *state_names[] = {
+				"IDLE", "ALIGN", "PULL", "BOOST", "ACCEL",
+				"BLEND", "RUN", "RETRY", "FAULT"
+			};
+			const char *state_name = "UNKNOWN";
+			if (status.state >= 0 && status.state < (int)(sizeof(state_names) / sizeof(state_names[0]))) {
+				state_name = state_names[status.state];
+			}
+
+			commands_printf("Engine start active       : %s", status.active ? "true" : "false");
+			commands_printf("Engine start state        : %s (%d)", state_name, status.state);
+			commands_printf("Engine start retry count  : %d", status.retry_count);
+			commands_printf("Engine start openloop erpm: %.1f", (double)status.openloop_erpm);
+			commands_printf("Engine start openloop deg : %.1f", (double)status.openloop_phase);
+			commands_printf("Engine start blend        : %.3f", (double)status.blend);
+			commands_printf("Engine start iq target    : %.1f", (double)status.iq_target);
+		} else {
+			commands_printf("Engine start status unavailable");
+		}
 	} else if (strcmp(argv[0], "drv_reset_faults") == 0) {
 		HW_RESET_DRV_FAULTS();
 	} else if (strcmp(argv[0], "update_pid_pos_offset") == 0) {

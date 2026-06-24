@@ -48,8 +48,19 @@ typedef enum {
 	ENGINE_START_PARAM_STALL_DUTY,
 	ENGINE_START_PARAM_COMPRESSION_TIME_MS,
 	ENGINE_START_PARAM_OBS_STABLE_TIME_MS,
+	ENGINE_START_PARAM_DIRECTION,
 	ENGINE_START_PARAM_NUM
 } engine_start_param_id_t;
+
+typedef struct {
+	int state;
+	bool active;
+	int retry_count;
+	float openloop_erpm;
+	float openloop_phase;
+	float blend;
+	float iq_target;
+} engine_start_status_t;
 
 // Functions
 void mcpwm_foc_init(mc_configuration *conf_m1, mc_configuration *conf_m2);
@@ -79,6 +90,7 @@ bool mcpwm_foc_engine_start_is_active(void);
 bool mcpwm_foc_engine_start_set_param(engine_start_param_id_t param, float value);
 bool mcpwm_foc_engine_start_get_param(engine_start_param_id_t param, float *value);
 void mcpwm_foc_engine_start_reset_params(void);
+bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status);
 void mcpwm_foc_set_fw_override(float current);
 int mcpwm_foc_set_tachometer_value(int steps);
 float mcpwm_foc_get_duty_cycle_set(void);

@@ -261,6 +261,7 @@ abs(actual_erpm) >= obs-min-erpm
 | `stall-duty` | `ENGINE_START_PARAM_STALL_DUTY` | `0.12` | duty | 压缩/卡滞 duty 阈值 |
 | `compression-time-ms` | `ENGINE_START_PARAM_COMPRESSION_TIME_MS` | `50` | ms | 压缩点检测持续时间 |
 | `obs-stable-time-ms` | `ENGINE_START_PARAM_OBS_STABLE_TIME_MS` | `100` | ms | Observer 稳定持续时间 |
+| `direction` | `ENGINE_START_PARAM_DIRECTION` | `1.0` | sign | 开环启动方向，正数为正向，负数为反向 |
 
 ## 10. 参数合法性检查
 
@@ -269,6 +270,7 @@ abs(actual_erpm) >= obs-min-erpm
 - 所有参数必须是 finite number。
 - `stall-duty` 必须在 `0.0 ~ 1.0`。
 - `max-retry` 必须在 `0 ~ 20`。
+- `direction` 的绝对值必须在 `0.5 ~ 1.0`，实际使用时会归一为正向或反向。
 - 时间类参数必须大于 0，避免除零或无意义状态。
 - 其他参数必须大于等于 0。
 
@@ -292,6 +294,8 @@ engine_stop
 engine_status
 ```
 
+`engine_status` 会输出 active、state、retry_count、openloop_erpm、openloop_phase、blend 和 iq_target，便于实车判断卡在哪个阶段。
+
 Terminal 命令当前只做 start/stop/status，不负责改参数。调参数优先使用 Lisp。
 
 ## 12. Lisp 使用方法
@@ -302,6 +306,7 @@ Terminal 命令当前只做 start/stop/status，不负责改参数。调参数�
 (engine-start)
 (engine-stop)
 (engine-start-active)
+(engine-status) ; 返回 (state active retry-count openloop-erpm openloop-phase blend iq-target)
 ```
 
 ### 读取参数
@@ -319,6 +324,7 @@ Terminal 命令当前只做 start/stop/status，不负责改参数。调参数�
 (engine-param-set 'boost-time-ms 100)
 (engine-param-set 'pull-current 110.0)
 (engine-param-set 'stall-duty 0.10)
+(engine-param-set 'direction 1.0) ; 如电机方向相反可改为 -1.0
 ```
 
 ### 恢复默认值
@@ -339,6 +345,7 @@ Terminal 命令当前只做 start/stop/status，不负责改参数。调参数�
 (engine-param-set 'boost-time-ms 100)
 (engine-param-set 'accel-current 150.0)
 (engine-param-set 'stall-duty 0.10)
+(engine-param-set 'direction 1.0) ; 如电机方向相反可改为 -1.0
 
 ; 启动
 (engine-start)
@@ -417,11 +424,11 @@ Terminal 命令当前只做 start/stop/status，不负责改参数。调参数�
 
 ### 如果继续增强，建议优先做
 
-1. 增加 `engine_status` 输出更多内部状态，例如当前 state、retry_count、openloop_erpm、blend、当前参数值。
-2. 增加 Lisp 状态读取函数，例如 `(engine-state)`、`(engine-retry-count)`、`(engine-openloop-erpm)`。
+1. 根据实车结果继续扩展 `engine_status`，例如增加当前参数快照、电压、电流、duty、fault。
+2. 如 Lisp 自动调参需要更清晰的字段名，可在 `(engine-status)` 之外增加 `(engine-state)`、`(engine-retry-count)` 等单项读取函数。
 3. 增强 BLEND，不再简单用 `mcpwm_foc_set_openloop_phase()`，而是更贴近 FOC 内部 observer 接管路径。
 4. 增加压缩检测的低通/滞回逻辑，避免边界抖动。
-5. 增加可选方向参数，但仍不要改 VESC Tool 协议。
+5. 如果需要正反方向更严格区分，可将 `direction` 从 sign 扩展为带方向状态显示和安全确认的参数，但仍不要改 VESC Tool 协议。
 6. 如果最终需要持久化参数，再考虑独立 flash storage 或已有 Lisp storage，不要直接改 `mc_configuration`，除非明确要改协议。
 
 ### 如果发现普通控制模式被影响
