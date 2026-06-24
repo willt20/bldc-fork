@@ -912,6 +912,143 @@ void mc_interface_set_openloop_duty_phase(float dutyCycle, float phase){
 	events_add("set_openloop_duty_phase", phase);
 }
 
+void mc_interface_engine_start(void) {
+	SHUTDOWN_RESET();
+
+	if (mc_interface_try_input()) {
+		return;
+	}
+
+	switch (motor_now()->m_conf.motor_type) {
+	case MOTOR_TYPE_FOC:
+		mcpwm_foc_engine_start();
+		break;
+
+	default:
+		break;
+	}
+
+	events_add("engine_start", 1.0);
+}
+
+void mc_interface_engine_stop(void) {
+	switch (motor_now()->m_conf.motor_type) {
+	case MOTOR_TYPE_FOC:
+		mcpwm_foc_engine_stop();
+		break;
+
+	default:
+		break;
+	}
+
+	events_add("engine_stop", 0.0);
+}
+
+bool mc_interface_engine_start_is_active(void) {
+	bool res = false;
+
+	switch (motor_now()->m_conf.motor_type) {
+	case MOTOR_TYPE_FOC:
+		res = mcpwm_foc_engine_start_is_active();
+		break;
+
+	default:
+		break;
+	}
+
+	return res;
+}
+
+bool mc_interface_engine_start_is_faulted(void) {
+	bool res = false;
+
+	switch (motor_now()->m_conf.motor_type) {
+	case MOTOR_TYPE_FOC:
+		res = mcpwm_foc_engine_start_is_faulted();
+		break;
+
+	default:
+		break;
+	}
+
+	return res;
+}
+
+const char *mc_interface_engine_start_state(void) {
+	const char *res = "UNSUPPORTED";
+
+	switch (motor_now()->m_conf.motor_type) {
+	case MOTOR_TYPE_FOC:
+		res = mcpwm_foc_engine_start_state();
+		break;
+
+	default:
+		break;
+	}
+
+	return res;
+}
+
+int mc_interface_engine_start_retry_count(void) {
+	int res = 0;
+
+	switch (motor_now()->m_conf.motor_type) {
+	case MOTOR_TYPE_FOC:
+		res = mcpwm_foc_engine_start_retry_count();
+		break;
+
+	default:
+		break;
+	}
+
+	return res;
+}
+
+float mc_interface_engine_start_openloop_erpm(void) {
+	float res = 0.0f;
+
+	switch (motor_now()->m_conf.motor_type) {
+	case MOTOR_TYPE_FOC:
+		res = mcpwm_foc_engine_start_openloop_erpm();
+		break;
+
+	default:
+		break;
+	}
+
+	return res;
+}
+
+float mc_interface_engine_start_blend(void) {
+	float res = 0.0f;
+
+	switch (motor_now()->m_conf.motor_type) {
+	case MOTOR_TYPE_FOC:
+		res = mcpwm_foc_engine_start_blend();
+		break;
+
+	default:
+		break;
+	}
+
+	return res;
+}
+
+float mc_interface_engine_start_iq_target(void) {
+	float res = 0.0f;
+
+	switch (motor_now()->m_conf.motor_type) {
+	case MOTOR_TYPE_FOC:
+		res = mcpwm_foc_engine_start_iq_target();
+		break;
+
+	default:
+		break;
+	}
+
+	return res;
+}
+
 void mc_interface_brake_now(void) {
 	SHUTDOWN_RESET();
 

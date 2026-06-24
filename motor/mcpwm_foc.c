@@ -42,6 +42,48 @@
 #include "virtual_motor.h"
 #include "foc_math.h"
 
+
+// Engine start mode for direct crankshaft starting. Parameters are compile-time
+// constants in this first version to avoid changing mc_configuration or the
+// VESC Tool protocol.
+#define ENGINE_START_ENABLE        1
+#define ENGINE_ALIGN_CURRENT       60.0f
+#define ENGINE_ALIGN_TIME_MS       500
+#define ENGINE_PULL_CURRENT        120.0f
+#define ENGINE_PULL_START_ERPM     100.0f
+#define ENGINE_PULL_TARGET_ERPM    800.0f
+#define ENGINE_PULL_RAMP_ERPM_S    1000.0f
+#define ENGINE_BOOST_CURRENT       240.0f
+#define ENGINE_BOOST_TIME_MS       120
+#define ENGINE_ACCEL_CURRENT       180.0f
+#define ENGINE_ACCEL_TARGET_ERPM   1800.0f
+#define ENGINE_ACCEL_RAMP_ERPM_S   2000.0f
+#define ENGINE_RUN_CURRENT         0.0f
+#define ENGINE_OBS_MIN_ERPM        1200.0f
+#define ENGINE_BLEND_TIME_MS       200
+#define ENGINE_RETRY_DELAY_MS      300
+#define ENGINE_MAX_RETRY           3
+#define ENGINE_MAX_START_TIME_MS   5000
+#define ENGINE_STALL_ERPM          150.0f
+#define ENGINE_STALL_CURRENT       100.0f
+#define ENGINE_STALL_DUTY          0.12f
+#define ENGINE_COMPRESSION_TIME_MS 50
+#define ENGINE_OBS_STABLE_TIME_MS  100
+
+#if ENGINE_START_ENABLE
+typedef enum {
+	ENGINE_START_IDLE = 0,
+	ENGINE_START_ALIGN,
+	ENGINE_START_PULL,
+	ENGINE_START_BOOST,
+	ENGINE_START_ACCEL,
+	ENGINE_START_BLEND,
+	ENGINE_START_RUN,
+	ENGINE_START_RETRY,
+	ENGINE_START_FAULT
+} engine_start_state_t;
+#endif
+
 // Private variables
 static volatile bool m_dccal_done = false;
 static volatile bool m_init_done = false;
@@ -50,6 +92,20 @@ static volatile motor_all_state_t m_motor_1;
 static volatile motor_all_state_t m_motor_2;
 #endif
 static volatile int m_isr_motor = 0;
+
+#if ENGINE_START_ENABLE
+static engine_start_state_t engine_start_state = ENGINE_START_IDLE;
+static bool engine_start_active = false;
+static systime_t engine_start_timer = 0;
+static systime_t engine_start_global_timer = 0;
+static int engine_start_retry_count = 0;
+static float engine_start_openloop_erpm = 0.0f;
+static float engine_start_openloop_phase = 0.0f;
+static float engine_start_blend = 0.0f;
+static float engine_start_iq_target = 0.0f;
+static systime_t engine_start_compression_timer = 0;
+static systime_t engine_start_observer_timer = 0;
+#endif
 
 // Private functions
 static void control_current(motor_all_state_t *motor, float dt);
@@ -60,6 +116,18 @@ static void full_brake_hw(motor_all_state_t *motor);
 static void terminal_plot_hfi(int argc, const char **argv);
 static void timer_update(motor_all_state_t *motor, float dt);
 static void hfi_update(volatile motor_all_state_t *motor, float dt);
+#if ENGINE_START_ENABLE
+static void engine_start_reset(void);
+static void engine_start_update(float dt);
+static bool engine_start_detect_compression(void);
+static bool engine_start_observer_stable(void);
+static void engine_start_set_openloop_current(float iq, float erpm, float dt);
+static void engine_start_stop_output(void);
+static void engine_start_set_state(engine_start_state_t state);
+static uint32_t engine_start_elapsed_ms(systime_t timer);
+static void engine_start_advance_openloop_phase(float erpm, float dt);
+static const char *engine_start_state_name(engine_start_state_t state);
+#endif
 
 // Threads
 static THD_WORKING_AREA(timer_thread_wa, 512);
@@ -920,6 +988,94 @@ void mcpwm_foc_set_openloop_phase(float current, float phase) {
 		get_motor_now()->m_state = MC_STATE_RUNNING;
 	}
 }
+
+#if ENGINE_START_ENABLE
+void mcpwm_foc_engine_start(void) {
+	volatile motor_all_state_t *motor = get_motor_now();
+
+	if (mc_interface_get_fault() != FAULT_CODE_NONE ||
+			mc_interface_get_input_voltage_filtered() < motor->m_conf->l_min_vin) {
+		engine_start_set_state(ENGINE_START_FAULT);
+		engine_start_active = false;
+		engine_start_stop_output();
+		return;
+	}
+
+	engine_start_reset();
+	engine_start_active = true;
+	engine_start_global_timer = chVTGetSystemTimeX();
+	engine_start_set_state(ENGINE_START_ALIGN);
+	motor->m_motor_released = false;
+	motor->m_state = MC_STATE_RUNNING;
+}
+
+void mcpwm_foc_engine_stop(void) {
+	engine_start_reset();
+	engine_start_stop_output();
+}
+
+bool mcpwm_foc_engine_start_is_active(void) {
+	return engine_start_active;
+}
+
+bool mcpwm_foc_engine_start_is_faulted(void) {
+	return engine_start_state == ENGINE_START_FAULT;
+}
+
+const char *mcpwm_foc_engine_start_state(void) {
+	return engine_start_state_name(engine_start_state);
+}
+
+int mcpwm_foc_engine_start_retry_count(void) {
+	return engine_start_retry_count;
+}
+
+float mcpwm_foc_engine_start_openloop_erpm(void) {
+	return engine_start_openloop_erpm;
+}
+
+float mcpwm_foc_engine_start_blend(void) {
+	return engine_start_blend;
+}
+
+float mcpwm_foc_engine_start_iq_target(void) {
+	return engine_start_iq_target;
+}
+#else
+void mcpwm_foc_engine_start(void) {
+}
+
+void mcpwm_foc_engine_stop(void) {
+}
+
+bool mcpwm_foc_engine_start_is_active(void) {
+	return false;
+}
+
+bool mcpwm_foc_engine_start_is_faulted(void) {
+	return false;
+}
+
+const char *mcpwm_foc_engine_start_state(void) {
+	return "DISABLED";
+}
+
+int mcpwm_foc_engine_start_retry_count(void) {
+	return 0;
+}
+
+float mcpwm_foc_engine_start_openloop_erpm(void) {
+	return 0.0f;
+}
+
+float mcpwm_foc_engine_start_blend(void) {
+	return 0.0f;
+}
+
+float mcpwm_foc_engine_start_iq_target(void) {
+	return 0.0f;
+}
+#endif
 
 /**
  * Get current offsets,
@@ -3306,6 +3462,10 @@ void mcpwm_foc_adc_int_handler(void *p, uint32_t flags) {
 		const float vq_now = state_now->vq;
 		const float speed_fast_now = motor_now->m_pll_speed;
 
+#if ENGINE_START_ENABLE
+		engine_start_update(dt);
+#endif
+
 		float id_set_tmp = motor_now->m_id_set;
 		float iq_set_tmp = motor_now->m_iq_set;
 		state_now->max_duty = conf_now->l_max_duty;
@@ -3596,6 +3756,16 @@ void mcpwm_foc_adc_int_handler(void *p, uint32_t flags) {
 					motor_now->m_control_mode == CONTROL_MODE_OPENLOOP_DUTY_PHASE) {
 				state_now->phase = motor_now->m_openloop_phase;
 			}
+
+#if ENGINE_START_ENABLE
+			if (engine_start_active && engine_start_state == ENGINE_START_BLEND) {
+				// Smoothly hand over from the open-loop crank angle to the observer angle.
+				float phase_delta = motor_now->m_phase_now_observer - motor_now->m_openloop_angle;
+				utils_norm_angle_rad(&phase_delta);
+				state_now->phase = motor_now->m_openloop_angle + phase_delta * engine_start_blend;
+				utils_norm_angle_rad((float*)&state_now->phase);
+			}
+#endif
 
 			if (motor_now->m_phase_override) {
 				state_now->phase = motor_now->m_phase_now_override;
@@ -3918,6 +4088,254 @@ void mcpwm_foc_adc_int_handler(void *p, uint32_t flags) {
 #pragma GCC pop_options
 
 // Private functions
+
+#if ENGINE_START_ENABLE
+static uint32_t engine_start_elapsed_ms(systime_t timer) {
+	return ST2MS(chVTTimeElapsedSinceX(timer));
+}
+
+static const char *engine_start_state_name(engine_start_state_t state) {
+	switch (state) {
+	case ENGINE_START_IDLE: return "IDLE";
+	case ENGINE_START_ALIGN: return "ALIGN";
+	case ENGINE_START_PULL: return "PULL";
+	case ENGINE_START_BOOST: return "BOOST";
+	case ENGINE_START_ACCEL: return "ACCEL";
+	case ENGINE_START_BLEND: return "BLEND";
+	case ENGINE_START_RUN: return "RUN";
+	case ENGINE_START_RETRY: return "RETRY";
+	case ENGINE_START_FAULT: return "FAULT";
+	default: return "UNKNOWN";
+	}
+}
+
+static void engine_start_set_state(engine_start_state_t state) {
+	engine_start_state = state;
+	engine_start_timer = chVTGetSystemTimeX();
+
+	// Per-state timers must be restarted only when entering their qualifying state.
+	if (state != ENGINE_START_PULL) {
+		engine_start_compression_timer = 0;
+	}
+
+	if (state != ENGINE_START_ACCEL) {
+		engine_start_observer_timer = 0;
+	}
+}
+
+static void engine_start_reset(void) {
+	engine_start_state = ENGINE_START_IDLE;
+	engine_start_active = false;
+	engine_start_timer = chVTGetSystemTimeX();
+	engine_start_global_timer = engine_start_timer;
+	engine_start_retry_count = 0;
+	engine_start_openloop_erpm = ENGINE_PULL_START_ERPM;
+	engine_start_openloop_phase = 0.0f;
+	engine_start_blend = 0.0f;
+	engine_start_iq_target = 0.0f;
+	engine_start_compression_timer = 0;
+	engine_start_observer_timer = 0;
+}
+
+static void engine_start_stop_output(void) {
+	volatile motor_all_state_t *motor = get_motor_now();
+	motor->m_id_set = 0.0f;
+	motor->m_iq_set = 0.0f;
+	motor->m_phase_override = false;
+	motor->m_phase_observer_override = false;
+	motor->m_control_mode = CONTROL_MODE_CURRENT;
+	motor->m_openloop_speed = 0.0f;
+	engine_start_iq_target = 0.0f;
+}
+
+static void engine_start_advance_openloop_phase(float erpm, float dt) {
+	volatile motor_all_state_t *motor = get_motor_now();
+
+	engine_start_openloop_phase += RPM2RADPS_f(erpm) * dt;
+	utils_norm_angle_rad(&engine_start_openloop_phase);
+	motor->m_openloop_angle = engine_start_openloop_phase;
+	motor->m_openloop_speed = RPM2RADPS_f(erpm);
+}
+
+static bool engine_start_detect_compression(void) {
+	volatile motor_all_state_t *motor = get_motor_now();
+	volatile motor_state_t *state = &motor->m_motor_state;
+	const bool stalled = fabsf(RADPS2RPM_f(motor->m_pll_speed)) < ENGINE_STALL_ERPM &&
+			state->i_abs_filter > ENGINE_STALL_CURRENT &&
+			fabsf(state->duty_now) > ENGINE_STALL_DUTY;
+
+	if (stalled) {
+		if (engine_start_compression_timer == 0) {
+			engine_start_compression_timer = chVTGetSystemTimeX();
+		}
+		return engine_start_elapsed_ms(engine_start_compression_timer) >= ENGINE_COMPRESSION_TIME_MS;
+	}
+
+	engine_start_compression_timer = 0;
+	return false;
+}
+
+static bool engine_start_observer_stable(void) {
+	volatile motor_all_state_t *motor = get_motor_now();
+	const bool fast_enough = fabsf(RADPS2RPM_f(motor->m_pll_speed)) > ENGINE_OBS_MIN_ERPM;
+
+	if (fast_enough) {
+		if (engine_start_observer_timer == 0) {
+			engine_start_observer_timer = chVTGetSystemTimeX();
+		}
+		return engine_start_elapsed_ms(engine_start_observer_timer) >= ENGINE_OBS_STABLE_TIME_MS;
+	}
+
+	engine_start_observer_timer = 0;
+	return false;
+}
+
+static void engine_start_set_openloop_current(float iq, float erpm, float dt) {
+	volatile motor_all_state_t *motor = get_motor_now();
+
+	(void)dt;
+	engine_start_iq_target = iq;
+	engine_start_openloop_erpm = erpm;
+
+	if (motor->m_control_mode != CONTROL_MODE_OPENLOOP) {
+		motor->m_openloop_angle = engine_start_openloop_phase;
+	}
+
+	motor->m_control_mode = CONTROL_MODE_OPENLOOP;
+	motor->m_id_set = 0.0f;
+	motor->m_iq_set = engine_start_iq_target;
+	motor->m_openloop_speed = RPM2RADPS_f(engine_start_openloop_erpm);
+
+	if (motor->m_state != MC_STATE_RUNNING) {
+		motor->m_motor_released = false;
+		motor->m_state = MC_STATE_RUNNING;
+	}
+}
+
+static void engine_start_update(float dt) {
+	volatile motor_all_state_t *motor = get_motor_now();
+
+	if (!engine_start_active && engine_start_state != ENGINE_START_FAULT) {
+		return;
+	}
+
+	if (engine_start_active) {
+		timeout_reset();
+	}
+
+	// Global safety gates: leave outputs off on faults, undervoltage or timeout.
+	if (mc_interface_get_fault() != FAULT_CODE_NONE ||
+			mc_interface_get_input_voltage_filtered() < motor->m_conf->l_min_vin ||
+			(engine_start_active && engine_start_elapsed_ms(engine_start_global_timer) > ENGINE_MAX_START_TIME_MS)) {
+		engine_start_set_state(ENGINE_START_FAULT);
+		engine_start_active = false;
+		engine_start_stop_output();
+		return;
+	}
+
+	switch (engine_start_state) {
+	case ENGINE_START_IDLE:
+		engine_start_stop_output();
+		break;
+
+	case ENGINE_START_ALIGN:
+		// Pre-position the rotor with a fixed D-axis vector before pulling the crank.
+		motor->m_control_mode = CONTROL_MODE_OPENLOOP_PHASE;
+		motor->m_id_set = ENGINE_ALIGN_CURRENT;
+		motor->m_iq_set = 0.0f;
+		motor->m_openloop_phase = 0.0f;
+		engine_start_openloop_phase = 0.0f;
+		if (motor->m_state != MC_STATE_RUNNING) {
+			motor->m_motor_released = false;
+			motor->m_state = MC_STATE_RUNNING;
+		}
+		if (engine_start_elapsed_ms(engine_start_timer) >= ENGINE_ALIGN_TIME_MS) {
+			engine_start_openloop_erpm = ENGINE_PULL_START_ERPM;
+			engine_start_set_state(ENGINE_START_PULL);
+		}
+		break;
+
+	case ENGINE_START_PULL:
+		// Slow open-loop pull to feel the compression point before applying boost.
+		utils_step_towards(&engine_start_openloop_erpm, ENGINE_PULL_TARGET_ERPM,
+				ENGINE_PULL_RAMP_ERPM_S * dt);
+		engine_start_set_openloop_current(ENGINE_PULL_CURRENT, engine_start_openloop_erpm, dt);
+		if (engine_start_detect_compression()) {
+			engine_start_set_state(ENGINE_START_BOOST);
+		} else if (fabsf(RADPS2RPM_f(motor->m_pll_speed)) > (0.8f * ENGINE_PULL_TARGET_ERPM)) {
+			engine_start_set_state(ENGINE_START_ACCEL);
+		}
+		break;
+
+	case ENGINE_START_BOOST:
+		// Short high-current impulse to push through compression TDC.
+		engine_start_set_openloop_current(ENGINE_BOOST_CURRENT,
+				fmaxf(engine_start_openloop_erpm, ENGINE_PULL_TARGET_ERPM), dt);
+		if (engine_start_elapsed_ms(engine_start_timer) >= ENGINE_BOOST_TIME_MS) {
+			if (fabsf(RADPS2RPM_f(motor->m_pll_speed)) < ENGINE_STALL_ERPM) {
+				engine_start_set_state(ENGINE_START_RETRY);
+			} else {
+				engine_start_set_state(ENGINE_START_ACCEL);
+			}
+		}
+		break;
+
+	case ENGINE_START_ACCEL:
+		// Build inertia in open loop until observer speed is high and stable enough.
+		utils_step_towards(&engine_start_openloop_erpm, ENGINE_ACCEL_TARGET_ERPM,
+				ENGINE_ACCEL_RAMP_ERPM_S * dt);
+		engine_start_set_openloop_current(ENGINE_ACCEL_CURRENT, engine_start_openloop_erpm, dt);
+		if (engine_start_observer_stable()) {
+			engine_start_blend = 0.0f;
+			engine_start_openloop_phase = motor->m_openloop_angle;
+			engine_start_set_state(ENGINE_START_BLEND);
+		}
+		break;
+
+	case ENGINE_START_BLEND:
+		// The actual phase blend is applied after normal observer phase calculation.
+		engine_start_blend += dt / ((float)ENGINE_BLEND_TIME_MS / 1000.0f);
+		utils_truncate_number(&engine_start_blend, 0.0f, 1.0f);
+		engine_start_advance_openloop_phase(engine_start_openloop_erpm, dt);
+		motor->m_control_mode = CONTROL_MODE_CURRENT;
+		motor->m_id_set = 0.0f;
+		motor->m_iq_set = ENGINE_ACCEL_CURRENT;
+		if (engine_start_blend >= 1.0f) {
+			engine_start_set_state(ENGINE_START_RUN);
+		}
+		break;
+
+	case ENGINE_START_RUN:
+		// Normal FOC/observer control has taken over; stop the start boost current.
+		engine_start_active = false;
+		engine_start_state = ENGINE_START_IDLE;
+		motor->m_phase_override = false;
+		motor->m_phase_observer_override = false;
+		motor->m_iq_set = ENGINE_RUN_CURRENT;
+		engine_start_iq_target = ENGINE_RUN_CURRENT;
+		break;
+
+	case ENGINE_START_RETRY:
+		// Remove torque briefly before another align/pull attempt.
+		engine_start_stop_output();
+		if (engine_start_elapsed_ms(engine_start_timer) >= ENGINE_RETRY_DELAY_MS) {
+			engine_start_retry_count++;
+			if (engine_start_retry_count <= ENGINE_MAX_RETRY) {
+				engine_start_set_state(ENGINE_START_ALIGN);
+			} else {
+				engine_start_set_state(ENGINE_START_FAULT);
+				engine_start_active = false;
+			}
+		}
+		break;
+
+	case ENGINE_START_FAULT:
+		engine_start_active = false;
+		engine_start_stop_output();
+		break;
+	}
+}
+#endif
 
 static void timer_update(motor_all_state_t *motor, float dt) {
 	const mc_configuration *conf_now = motor->m_conf;

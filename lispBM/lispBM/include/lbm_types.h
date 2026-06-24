@@ -77,6 +77,18 @@ typedef int64_t   lbm_int;
 typedef float    lbm_float;
 typedef double   lbm_double;
 
+#ifndef PRIu64
+#define PRIu64 "llu"
+#endif
+
+#ifndef PRId64
+#define PRId64 "lld"
+#endif
+
+#ifndef PRIx64
+#define PRIx64 "llx"
+#endif
+
 #define LBM_UINT_MAX UINT64_MAX
 #define LBM_INT_MIN  INT64_MIN
 #define LBM_INT_MAX  INT64_MAX

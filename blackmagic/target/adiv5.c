@@ -31,6 +31,12 @@
 #include "cortexm.h"
 #include "exception.h"
 
+#include <inttypes.h>
+
+#ifndef PRIx64
+#define PRIx64 "llx"
+#endif
+
 #ifndef DO_RESET_SEQ
 #define DO_RESET_SEQ 0
 #endif

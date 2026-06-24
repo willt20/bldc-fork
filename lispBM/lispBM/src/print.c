@@ -29,6 +29,14 @@
 #include "stack.h"
 #include "lbm_channel.h"
 
+#ifndef PRIu64
+#define PRIu64 "llu"
+#endif
+
+#ifndef PRId64
+#define PRId64 "lld"
+#endif
+
 #define PRINT          1
 #define PRINT_SPACE    2
 #define START_LIST     3
