@@ -1130,6 +1130,14 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 		commands_printf("MC CFG crc: 0x%04X (stored)  0x%04X (recalc)", mc_crc0, mc_crc1);
 		commands_printf("APP CFG crc: 0x%04X (stored)  0x%04X (recalc)", app_crc0, app_crc1);
 		commands_printf("Discrepancy is expected due to run-time recalculation of config params.\n");
+	} else if (strcmp(argv[0], "engine_start") == 0) {
+		mc_interface_engine_start();
+		commands_printf("Engine start requested");
+	} else if (strcmp(argv[0], "engine_stop") == 0) {
+		mc_interface_engine_stop();
+		commands_printf("Engine start stopped");
+	} else if (strcmp(argv[0], "engine_status") == 0) {
+		commands_printf("Engine start active: %s", mcpwm_foc_engine_start_is_active() ? "true" : "false");
 	} else if (strcmp(argv[0], "drv_reset_faults") == 0) {
 		HW_RESET_DRV_FAULTS();
 	} else if (strcmp(argv[0], "update_pid_pos_offset") == 0) {
@@ -1270,6 +1278,12 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 		commands_printf("crc");
 		commands_printf("  Print CRC values.");
 
+		commands_printf("engine_start");
+		commands_printf("  Start fixed-parameter FOC engine-start state machine.");
+		commands_printf("engine_stop");
+		commands_printf("  Stop engine-start output and reset its state machine.");
+		commands_printf("engine_status");
+		commands_printf("  Print whether engine-start is active.");
 		commands_printf("drv_reset_faults");
 		commands_printf("  Reset gate driver faults (if possible).");
 

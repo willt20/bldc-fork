@@ -25,6 +25,32 @@
 #include "foc_math.h"
 #include <stdbool.h>
 
+
+typedef enum {
+	ENGINE_START_PARAM_ALIGN_CURRENT = 0,
+	ENGINE_START_PARAM_ALIGN_TIME_MS,
+	ENGINE_START_PARAM_PULL_CURRENT,
+	ENGINE_START_PARAM_PULL_START_ERPM,
+	ENGINE_START_PARAM_PULL_TARGET_ERPM,
+	ENGINE_START_PARAM_PULL_RAMP_ERPM_S,
+	ENGINE_START_PARAM_BOOST_CURRENT,
+	ENGINE_START_PARAM_BOOST_TIME_MS,
+	ENGINE_START_PARAM_ACCEL_CURRENT,
+	ENGINE_START_PARAM_ACCEL_TARGET_ERPM,
+	ENGINE_START_PARAM_ACCEL_RAMP_ERPM_S,
+	ENGINE_START_PARAM_OBS_MIN_ERPM,
+	ENGINE_START_PARAM_BLEND_TIME_MS,
+	ENGINE_START_PARAM_RETRY_DELAY_MS,
+	ENGINE_START_PARAM_MAX_RETRY,
+	ENGINE_START_PARAM_MAX_START_TIME_MS,
+	ENGINE_START_PARAM_STALL_ERPM,
+	ENGINE_START_PARAM_STALL_CURRENT,
+	ENGINE_START_PARAM_STALL_DUTY,
+	ENGINE_START_PARAM_COMPRESSION_TIME_MS,
+	ENGINE_START_PARAM_OBS_STABLE_TIME_MS,
+	ENGINE_START_PARAM_NUM
+} engine_start_param_id_t;
+
 // Functions
 void mcpwm_foc_init(mc_configuration *conf_m1, mc_configuration *conf_m2);
 void mcpwm_foc_deinit(void);
@@ -47,6 +73,12 @@ void mcpwm_foc_set_openloop_current(float current, float rpm);
 void mcpwm_foc_set_openloop_phase(float current, float phase);
 void mcpwm_foc_set_openloop_duty(float dutyCycle, float rpm);
 void mcpwm_foc_set_openloop_duty_phase(float dutyCycle, float phase);
+void mcpwm_foc_engine_start(void);
+void mcpwm_foc_engine_stop(void);
+bool mcpwm_foc_engine_start_is_active(void);
+bool mcpwm_foc_engine_start_set_param(engine_start_param_id_t param, float value);
+bool mcpwm_foc_engine_start_get_param(engine_start_param_id_t param, float *value);
+void mcpwm_foc_engine_start_reset_params(void);
 void mcpwm_foc_set_fw_override(float current);
 int mcpwm_foc_set_tachometer_value(int steps);
 float mcpwm_foc_get_duty_cycle_set(void);

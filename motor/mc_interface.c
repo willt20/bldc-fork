@@ -839,6 +839,28 @@ void mc_interface_set_openloop_current(float current, float rpm) {
 
 	events_add("set_openloop_current", current);
 }
+void mc_interface_engine_start(void) {
+	SHUTDOWN_RESET();
+
+	if (mc_interface_try_input()) {
+		return;
+	}
+
+	if (motor_now()->m_conf.motor_type == MOTOR_TYPE_FOC) {
+		mcpwm_foc_engine_start();
+	}
+
+	events_add("engine_start", 0.0f);
+}
+
+void mc_interface_engine_stop(void) {
+	if (motor_now()->m_conf.motor_type == MOTOR_TYPE_FOC) {
+		mcpwm_foc_engine_stop();
+	}
+
+	events_add("engine_stop", 0.0f);
+}
+
 void mc_interface_set_openloop_phase(float current, float phase){
 	if (fabsf(current) > 0.001) {
 		SHUTDOWN_RESET();
