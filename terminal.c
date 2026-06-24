@@ -699,6 +699,25 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 		} else {
 			commands_printf("This command requires two arguments. [current erpm]\n");
 		}
+	} else if (strcmp(argv[0], "engine_start") == 0) {
+		commands_printf("Starting engine start mode...");
+		timeout_reset();
+		mc_interface_engine_start();
+	} else if (strcmp(argv[0], "engine_stop") == 0) {
+		commands_printf("Stopping engine start mode...");
+		mc_interface_engine_stop();
+	} else if (strcmp(argv[0], "engine_status") == 0) {
+		commands_printf("Engine start active: %s", mc_interface_engine_start_is_active() ? "yes" : "no");
+		commands_printf("Engine start faulted: %s", mc_interface_engine_start_is_faulted() ? "yes" : "no");
+		commands_printf("Engine start state: %s", mc_interface_engine_start_state());
+		commands_printf("Engine start retry count: %d", mc_interface_engine_start_retry_count());
+		commands_printf("Engine start open-loop ERPM: %.1f", (double)mc_interface_engine_start_openloop_erpm());
+		commands_printf("Engine start blend: %.3f", (double)mc_interface_engine_start_blend());
+		commands_printf("Engine start IQ target: %.1f A", (double)mc_interface_engine_start_iq_target());
+		commands_printf("Fault: %s", mc_interface_fault_to_string(mc_interface_get_fault()));
+		commands_printf("ERPM: %.1f", (double)mc_interface_get_rpm());
+		commands_printf("Duty: %.3f", (double)mc_interface_get_duty_cycle_now());
+		commands_printf("Motor current: %.1f A", (double)mc_interface_get_tot_current());
 	} else if (strcmp(argv[0], "foc_openloop_duty") == 0) {
 		if (argc == 3) {
 			float duty = -1.0;
@@ -1237,6 +1256,15 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 
 		commands_printf("hw_status");
 		commands_printf("  Print some hardware status information.");
+
+		commands_printf("engine_start");
+		commands_printf("  Start the fixed-parameter FOC engine start state machine.");
+
+		commands_printf("engine_stop");
+		commands_printf("  Stop engine start mode and command zero current.");
+
+		commands_printf("engine_status");
+		commands_printf("  Print engine start activity and basic drive state.");
 
 		commands_printf("foc_openloop [current] [erpm]");
 		commands_printf("  Create an open loop rotating current vector.");
