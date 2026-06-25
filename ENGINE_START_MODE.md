@@ -498,7 +498,7 @@ OR success_rate < 60%
 
 - 每次 `engine_start_update()` 仍只做状态机和常数次判断。
 - V3/V4 只在启动结束时记录 1 次结果并做固定数量参数更新。
-- 统计窗口是固定 16 项环形缓冲，不遍历历史、不分配内存。
+- 统计窗口是固定 16 项环形缓冲，不遍历历史、不分配内存；所有平均值/比例计算先使用 `engine_start_attempt_count_safe()` 把分母钳到至少 1，避免启动切换瞬间出现 0/0 或 NaN。
 - 因此实时复杂度为 O(1)，不会影响 ISR/FOC 主控制结构。
 
 ## 12. V5/V6 策略选择与知识迁移
@@ -519,7 +519,7 @@ V5 根据固定窗口内的成功率、stall 率、compression 率、rebound 率
 | `NORMAL_START` | 默认/均衡 | 不额外修正 |
 | `HOT_START` | success_rate 高、无主要失败且 avg_start_time 短 | 小幅降低 boost_current、gap_time、pulse_time |
 
-如果 V6 命中知识库，先进入策略仲裁层：`v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH` 时为 `V6_ONLY`；`ENGINE_KNOWLEDGE_CONFIDENCE_MIN <= v6_confidence < ENGINE_KNOWLEDGE_CONFIDENCE_HIGH` 时为 `HYBRID_LOCKED`，保留 V6 预加载但跳过 V5 override；低于 `ENGINE_KNOWLEDGE_CONFIDENCE_MIN` 则丢弃本次 V6 匹配并进入 `V5_ONLY`。这样避免中等置信度时 V6、V5、V3 同时朝不同方向拉参数。策略切换要求 `ENGINE_STRATEGY_SWITCH_CONFIRM = 5` 次尝试间隔，避免频繁抖动。策略修正只调用有上下限和 EMA 的参数写入函数。
+如果 V6 命中知识库，先把 `v6_confidence` 钳制在 `ENGINE_KNOWLEDGE_CONFIDENCE_FLOOR = 0.30` 到 `ENGINE_KNOWLEDGE_CONFIDENCE_CEIL = 0.95`，再进入策略仲裁层：`v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH` 时为 `V6_ONLY`；`ENGINE_KNOWLEDGE_CONFIDENCE_MIN <= v6_confidence < ENGINE_KNOWLEDGE_CONFIDENCE_HIGH` 时为 `HYBRID_LOCKED`，保留 V6 预加载但跳过 V5 override；低于 `ENGINE_KNOWLEDGE_CONFIDENCE_MIN` 则丢弃本次 V6 匹配并进入 `V5_ONLY`。这样避免中等置信度时 V6、V5、V3 同时朝不同方向拉参数。策略切换要求 `ENGINE_STRATEGY_SWITCH_CONFIRM = 5` 次尝试间隔，避免频繁抖动。策略修正只调用有上下限和 EMA 的参数写入函数。
 
 ### 12.2 V6 Knowledge Transfer
 
@@ -542,7 +542,7 @@ similarity =
   + abs(avg_start_time_diff / 5000)
 ```
 
-匹配成功且 `v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_MIN` 后预加载 `boost_current_1/2/3`、`boost_gap_ms`、`boost_pulse_ms` 和 strategy。若 `v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH`，本次启动为 `V6_ONLY`；若置信度处于中间区间，本次启动为 `HYBRID_LOCKED`，继续使用 V6 预加载但不执行 V5 override；若低于最小置信度则不加载知识，回到 `V5_ONLY`。
+原始 confidence 计算后会先 clamp 到 0.30~0.95，避免不同发动机/冷热线性尺度导致 policy mode 在边界附近抖动。匹配成功且 `v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_MIN` 后预加载 `boost_current_1/2/3`、`boost_gap_ms`、`boost_pulse_ms` 和 strategy。若 `v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH`，本次启动为 `V6_ONLY`；若置信度处于中间区间，本次启动为 `HYBRID_LOCKED`，继续使用 V6 预加载但不执行 V5 override；若低于最小置信度则不加载知识，回到 `V5_ONLY`。
 
 ### 12.3 O(1)/bounded loop 说明
 

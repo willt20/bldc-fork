@@ -132,6 +132,8 @@
 #define ENGINE_KNOWLEDGE_MAX           8
 #define ENGINE_KNOWLEDGE_CONFIDENCE_HIGH 0.80f
 #define ENGINE_KNOWLEDGE_CONFIDENCE_MIN  0.45f
+#define ENGINE_KNOWLEDGE_CONFIDENCE_FLOOR 0.30f
+#define ENGINE_KNOWLEDGE_CONFIDENCE_CEIL  0.95f
 #define ENGINE_ADAPTIVE_GAIN_LOCKED      0.05f
 
 #if ENGINE_START_ENABLE
@@ -375,6 +377,7 @@ static float engine_start_direction(void);
 static void engine_start_fault(engine_start_stop_reason_t reason);
 static float engine_start_select_boost_current(void);
 static void engine_start_v3v4_record(engine_start_attempt_result_t result);
+static int engine_start_attempt_count_safe(void);
 static void engine_start_v3_update(engine_start_attempt_result_t result);
 static void engine_start_v4_update(void);
 static void engine_start_adapt_param(float *param, float target, float min, float max);
@@ -1229,8 +1232,8 @@ bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
 	status->consecutive_success = engine_start_v3v4.consecutive_success;
 	status->strategy = engine_start_strategy;
 	status->knowledge_count = engine_start_knowledge_count;
-	status->avg_start_time_ms = engine_start_attempt_window_count > 0 ?
-			(float)engine_start_attempt_time_sum_ms / (float)engine_start_attempt_window_count : 0.0f;
+	int safe_count = engine_start_attempt_count_safe();
+	status->avg_start_time_ms = (float)engine_start_attempt_time_sum_ms / (float)safe_count;
 	status->v6_confidence = engine_start_v6_confidence;
 	status->learning_gain = engine_start_learning_gain;
 	status->policy_mode = (int)engine_start_policy_mode;
@@ -1501,6 +1504,11 @@ static float engine_start_select_boost_current(void) {
 	}
 }
 
+static int engine_start_attempt_count_safe(void) {
+	int count = engine_start_attempt_window_count;
+	return count > 0 ? count : 1;
+}
+
 static void engine_start_attempt_count(engine_start_attempt_result_t result, int delta) {
 	switch (result) {
 	case ENGINE_ATTEMPT_COMPRESSION_FAIL:
@@ -1537,6 +1545,7 @@ static void engine_start_v4_update(void) {
 		return;
 	}
 
+	total = engine_start_attempt_count_safe();
 	float inv_total = 1.0f / (float)total;
 	float success_rate = (float)engine_start_v3v4.success_count * inv_total;
 	float stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
@@ -1698,7 +1707,8 @@ static void engine_start_v5_select_strategy(void) {
 		return;
 	}
 
-	float inv_total = 1.0f / (float)engine_start_attempt_window_count;
+	int total = engine_start_attempt_count_safe();
+	float inv_total = 1.0f / (float)total;
 	float success_rate = (float)engine_start_v3v4.success_count * inv_total;
 	float stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
 	float compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
@@ -1725,7 +1735,8 @@ static float engine_start_v6_similarity(const engine_start_knowledge_t *knowledg
 	if (!knowledge || engine_start_attempt_window_count <= 0) {
 		return 1.0e9f;
 	}
-	float inv_total = 1.0f / (float)engine_start_attempt_window_count;
+	int total = engine_start_attempt_count_safe();
+	float inv_total = 1.0f / (float)total;
 	float stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
 	float compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
 	float rebound_rate = (float)engine_start_v3v4.rebound_fail_count * inv_total;
@@ -1740,7 +1751,8 @@ static void engine_start_v6_save_knowledge(void) {
 	if (engine_start_attempt_window_count <= 0) {
 		return;
 	}
-	float inv_total = 1.0f / (float)engine_start_attempt_window_count;
+	int total = engine_start_attempt_count_safe();
+	float inv_total = 1.0f / (float)total;
 	engine_start_knowledge_t *knowledge = &engine_start_knowledge[engine_start_knowledge_pos];
 	knowledge->engine_signature_stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
 	knowledge->engine_signature_compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
@@ -1774,6 +1786,7 @@ static bool engine_start_v6_preload_knowledge(void) {
 	}
 
 	engine_start_v6_confidence = 1.0f / (1.0f + best_similarity);
+	utils_truncate_number(&engine_start_v6_confidence, ENGINE_KNOWLEDGE_CONFIDENCE_FLOOR, ENGINE_KNOWLEDGE_CONFIDENCE_CEIL);
 	if (engine_start_v6_confidence < ENGINE_KNOWLEDGE_CONFIDENCE_MIN) {
 		return false;
 	}

@@ -21,6 +21,7 @@
 ;
 ; Policy modes:
 ; 0 V5_ONLY, 1 V6_ONLY, 2 HYBRID_LOCKED
+; v6-confidence is clamped to 0.30..0.95 before policy arbitration.
 ;
 ; Stop reasons:
 ; 0 NONE, 1 USER, 2 TIMEOUT, 3 UNDERVOLTAGE, 4 FAULT,
