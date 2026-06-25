@@ -1888,6 +1888,13 @@ static char *engine_start_param_names[ENGINE_START_PARAM_NUM] = {
 	"pull-ramp-erpm-s",
 	"boost-current",
 	"boost-time-ms",
+	"boost-current-1",
+	"boost-current-2",
+	"boost-current-3",
+	"boost-pulse-ms",
+	"boost-gap-ms",
+	"boost-max-pulses",
+	"boost-success-erpm",
 	"accel-current",
 	"accel-target-erpm",
 	"accel-ramp-erpm-s",
@@ -1901,7 +1908,14 @@ static char *engine_start_param_names[ENGINE_START_PARAM_NUM] = {
 	"stall-duty",
 	"compression-time-ms",
 	"obs-stable-time-ms",
-	"direction"
+	"direction",
+	"stall-confirm-ms",
+	"max-total-pulses",
+	"min-vin",
+	"backoff-ms",
+	"backoff-reverse-enable",
+	"backoff-current",
+	"backoff-erpm"
 };
 static lbm_uint engine_start_param_syms[ENGINE_START_PARAM_NUM];
 
@@ -1975,10 +1989,20 @@ static lbm_value ext_engine_start_status(lbm_value *args, lbm_uint argn) {
 	}
 
 	lbm_value res = ENC_SYM_NIL;
+	res = lbm_cons(lbm_enc_i(status.last_stop_reason), res);
+	res = lbm_cons(lbm_enc_i(status.obs_stable_ms), res);
+	res = lbm_cons(lbm_enc_i(status.stall_ms), res);
+	res = lbm_cons(lbm_enc_i(status.compression_ms), res);
+	res = lbm_cons(lbm_enc_float(status.accel_filt), res);
+	res = lbm_cons(lbm_enc_float(status.duty_abs_filt), res);
+	res = lbm_cons(lbm_enc_float(status.current_abs_filt), res);
+	res = lbm_cons(lbm_enc_float(status.erpm_abs_filt), res);
 	res = lbm_cons(lbm_enc_float(status.iq_target), res);
 	res = lbm_cons(lbm_enc_float(status.blend), res);
 	res = lbm_cons(lbm_enc_float(status.openloop_phase), res);
 	res = lbm_cons(lbm_enc_float(status.openloop_erpm), res);
+	res = lbm_cons(lbm_enc_i(status.total_pulse_count), res);
+	res = lbm_cons(lbm_enc_i(status.boost_pulse_count), res);
 	res = lbm_cons(lbm_enc_i(status.retry_count), res);
 	res = lbm_cons(status.active ? ENC_SYM_TRUE : ENC_SYM_NIL, res);
 	res = lbm_cons(lbm_enc_i(status.state), res);

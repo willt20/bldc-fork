@@ -1140,21 +1140,39 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 		engine_start_status_t status;
 		if (mcpwm_foc_engine_start_get_status(&status)) {
 			static const char *state_names[] = {
-				"IDLE", "ALIGN", "PULL", "BOOST", "ACCEL",
-				"BLEND", "RUN", "RETRY", "FAULT"
+				"IDLE", "ALIGN", "PULL", "BOOST", "PULSE_GAP",
+				"BACKOFF", "ACCEL", "BLEND", "RUN", "RETRY", "FAULT"
+			};
+			static const char *stop_reason_names[] = {
+				"NONE", "USER", "TIMEOUT", "UNDERVOLTAGE", "FAULT",
+				"MAX_RETRY", "MAX_PULSES", "STALL"
 			};
 			const char *state_name = "UNKNOWN";
 			if (status.state >= 0 && status.state < (int)(sizeof(state_names) / sizeof(state_names[0]))) {
 				state_name = state_names[status.state];
 			}
+			const char *stop_reason_name = "UNKNOWN";
+			if (status.last_stop_reason >= 0 &&
+					status.last_stop_reason < (int)(sizeof(stop_reason_names) / sizeof(stop_reason_names[0]))) {
+				stop_reason_name = stop_reason_names[status.last_stop_reason];
+			}
 
 			commands_printf("Engine start active       : %s", status.active ? "true" : "false");
 			commands_printf("Engine start state        : %s (%d)", state_name, status.state);
 			commands_printf("Engine start retry count  : %d", status.retry_count);
+			commands_printf("Engine start pulse count  : %d / total %d", status.boost_pulse_count, status.total_pulse_count);
 			commands_printf("Engine start openloop erpm: %.1f", (double)status.openloop_erpm);
 			commands_printf("Engine start openloop deg : %.1f", (double)status.openloop_phase);
 			commands_printf("Engine start blend        : %.3f", (double)status.blend);
 			commands_printf("Engine start iq target    : %.1f", (double)status.iq_target);
+			commands_printf("Engine start erpm filt    : %.1f", (double)status.erpm_abs_filt);
+			commands_printf("Engine start current filt : %.1f", (double)status.current_abs_filt);
+			commands_printf("Engine start duty filt    : %.3f", (double)status.duty_abs_filt);
+			commands_printf("Engine start accel filt   : %.1f", (double)status.accel_filt);
+			commands_printf("Engine start compression  : %d ms", status.compression_ms);
+			commands_printf("Engine start stall        : %d ms", status.stall_ms);
+			commands_printf("Engine start obs stable   : %d ms", status.obs_stable_ms);
+			commands_printf("Engine start stop reason  : %s (%d)", stop_reason_name, status.last_stop_reason);
 		} else {
 			commands_printf("Engine start status unavailable");
 		}
