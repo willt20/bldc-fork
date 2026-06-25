@@ -88,6 +88,8 @@
 #define ENGINE_LOAD_LOW_SCORE      70.0f
 #define ENGINE_LOAD_RISE_SCORE     15.0f
 #define ENGINE_LOAD_FALL_SCORE     0.0f
+#define ENGINE_LOAD_DELTA_DEADBAND 5.0f
+#define ENGINE_LOAD_DELTA_MAX      60.0f
 #define ENGINE_HIGH_LOAD_ENTER_MS  20
 #define ENGINE_HIGH_LOAD_EXIT_MS   50
 #define ENGINE_PULSE_MIN_MS        50
@@ -1198,6 +1200,10 @@ static void engine_start_update_filters(float dt) {
 			ENGINE_LOAD_K_DUTY * engine_start_duty_abs_filt -
 			ENGINE_LOAD_K_ACCEL * engine_start_accel_filt;
 	engine_start_load_delta = engine_start_load_score - engine_start_load_score_prev;
+	if (fabsf(engine_start_load_delta) < ENGINE_LOAD_DELTA_DEADBAND) {
+		engine_start_load_delta = 0.0f;
+	}
+	utils_truncate_number(&engine_start_load_delta, -ENGINE_LOAD_DELTA_MAX, ENGINE_LOAD_DELTA_MAX);
 	engine_start_erpm_prev = erpm;
 
 	bool stall_cond = engine_start_erpm_abs_filt < engine_start_params.stall_erpm &&
@@ -1227,10 +1233,11 @@ static bool engine_start_detect_stall(void) {
 }
 
 static void engine_start_update_high_load_latch(float dt, bool compression) {
-	bool enter_cond = engine_start_load_score > ENGINE_LOAD_HIGH_SCORE ||
-			(engine_start_load_score > ENGINE_LOAD_LOW_SCORE &&
-					engine_start_load_delta > ENGINE_LOAD_RISE_SCORE) ||
-			compression;
+	float delta_entry_score = (ENGINE_LOAD_HIGH_SCORE + ENGINE_LOAD_LOW_SCORE) * 0.5f;
+	bool score_high = engine_start_load_score > ENGINE_LOAD_HIGH_SCORE;
+	bool delta_assist = engine_start_load_score > delta_entry_score &&
+			engine_start_load_delta > ENGINE_LOAD_RISE_SCORE;
+	bool enter_cond = score_high || delta_assist || compression;
 	bool exit_cond = engine_start_load_score < ENGINE_LOAD_LOW_SCORE &&
 			engine_start_load_delta < ENGINE_LOAD_FALL_SCORE &&
 			!compression;
