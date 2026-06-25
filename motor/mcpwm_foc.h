@@ -107,6 +107,7 @@ typedef struct {
 	float avg_start_time_ms;
 	float v6_confidence;
 	float learning_gain;
+	int policy_mode;
 } engine_start_status_t;
 
 // Functions

@@ -272,12 +272,13 @@ load_score =
   + ENGINE_LOAD_K_DUTY    * duty_abs_filt
   - ENGINE_LOAD_K_ACCEL   * accel_filt
 
-load_delta = load_score - last_load_score
+load_delta_raw = load_score - last_load_score
+load_delta_filt = deadband_and_clamp(load_delta_raw)
 ```
 
-其中 `erpm_abs_filt/current_abs_filt/duty_abs_filt` 使用 `ENGINE_LOAD_LP = 0.1` 的 EMA，一阶滤波，保持 MCU 负担很低。`load_delta` 不再单独二次 EMA，而是每次更新后直接取 `load_score` 的差分，减少对 10~30ms 压缩冲击的相位延迟。
+其中 `erpm_abs_filt/current_abs_filt/duty_abs_filt` 使用 `ENGINE_LOAD_LP = 0.1` 的 EMA，一阶滤波，保持 MCU 负担很低。代码中显式保留 `engine_start_load_delta_raw` 和 `engine_start_load_delta` 两层语义：raw 只表示本周期 `load_score` 差分，所有判断、状态和 status 输出统一使用经过 deadband + clamp 后的 `engine_start_load_delta`，避免同一压缩事件被两条 delta 语义链分别解释。
 
-为了避免无滤波微分信号过敏，`load_delta` 会先经过 `ENGINE_LOAD_DELTA_DEADBAND` 死区，小尖峰直接归零，再通过 `ENGINE_LOAD_DELTA_MAX` 限幅。`load_score` 是 HIGH_LOAD 主判据；`load_delta` 只用于捕捉压缩负载的快速上升并设置有时限的 pre-warning，不再直接触发 HIGH_LOAD，避免双通道竞争导致 PULSE/GAP 提前介入。pre-warning 只短时抑制 LOW_LOAD，超出 `ENGINE_LOAD_PREWARN_HOLD_MS` 后如果没有新的上升沿会自动释放，避免高惯量工况下长期保守。
+为了避免无滤波微分信号过敏，filtered `load_delta` 会先经过 `ENGINE_LOAD_DELTA_DEADBAND` 死区，小尖峰直接归零，再通过 `ENGINE_LOAD_DELTA_MAX` 限幅。`load_score` 是 HIGH_LOAD 主判据；`load_delta` 只用于捕捉压缩负载的快速上升并设置有时限的 pre-warning，不再直接触发 HIGH_LOAD，避免双通道竞争导致 PULSE/GAP 提前介入。pre-warning 只短时抑制 LOW_LOAD，超出 `ENGINE_LOAD_PREWARN_HOLD_MS` 后如果没有新的上升沿会自动释放，避免高惯量工况下长期保守。
 
 ### 6.2 压缩点检测
 
@@ -477,7 +478,7 @@ stability_score =
   - 0.1 * no_drive_rate
 ```
 
-进入 `ENGINE_STABLE_LOCK` 的条件；进入后 `engine_start_learning_gain` 置 0，冻结 V3 小步学习：
+进入 `ENGINE_STABLE_LOCK` 的条件；进入后 `engine_start_learning_gain` 降到 `ENGINE_ADAPTIVE_GAIN_LOCKED = 0.05`，只保留极小步长的温度/电压补偿，不再使用满增益学习，避免 V3/V6/V4 形成慢漂移闭环：
 
 ```text
 stability_score > 0.85
@@ -505,7 +506,7 @@ OR success_rate < 60%
 V5/V6 只在启动开始或启动结束时执行，不新增状态机状态，不改变 PULSE/GAP/BACKOFF/RECOVER 核心逻辑。执行顺序为：
 
 ```text
-V6 经验预加载 -> V5 策略修正 -> V3 小步微调 -> V4 稳定评分/锁定 -> V6 写回知识
+V6 经验预加载/仲裁 -> V5 策略修正(仅 V5_ONLY) -> V3 小步微调 -> V4 稳定评分/锁定 -> V6 写回知识
 ```
 
 ### 12.1 V5 Strategy Selector
@@ -518,7 +519,7 @@ V5 根据固定窗口内的成功率、stall 率、compression 率、rebound 率
 | `NORMAL_START` | 默认/均衡 | 不额外修正 |
 | `HOT_START` | success_rate 高、无主要失败且 avg_start_time 短 | 小幅降低 boost_current、gap_time、pulse_time |
 
-如果 V6 高置信度命中知识库，本次启动跳过 V5 策略覆盖。策略切换要求 `ENGINE_STRATEGY_SWITCH_CONFIRM = 5` 次尝试间隔，避免频繁抖动。策略修正只调用有上下限和 EMA 的参数写入函数。
+如果 V6 命中知识库，先进入策略仲裁层：`v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH` 时为 `V6_ONLY`；`ENGINE_KNOWLEDGE_CONFIDENCE_MIN <= v6_confidence < ENGINE_KNOWLEDGE_CONFIDENCE_HIGH` 时为 `HYBRID_LOCKED`，保留 V6 预加载但跳过 V5 override；低于 `ENGINE_KNOWLEDGE_CONFIDENCE_MIN` 则丢弃本次 V6 匹配并进入 `V5_ONLY`。这样避免中等置信度时 V6、V5、V3 同时朝不同方向拉参数。策略切换要求 `ENGINE_STRATEGY_SWITCH_CONFIRM = 5` 次尝试间隔，避免频繁抖动。策略修正只调用有上下限和 EMA 的参数写入函数。
 
 ### 12.2 V6 Knowledge Transfer
 
@@ -541,11 +542,11 @@ similarity =
   + abs(avg_start_time_diff / 5000)
 ```
 
-匹配成功后预加载 `boost_current_1/2/3`、`boost_gap_ms`、`boost_pulse_ms` 和 strategy。若 `v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH`，本次启动直接使用 V6 经验并跳过 V5 override，避免 V6 历史经验和 V5 当前策略方向冲突；否则再由 V5 根据当前窗口表现做轻微方向修正。
+匹配成功且 `v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_MIN` 后预加载 `boost_current_1/2/3`、`boost_gap_ms`、`boost_pulse_ms` 和 strategy。若 `v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH`，本次启动为 `V6_ONLY`；若置信度处于中间区间，本次启动为 `HYBRID_LOCKED`，继续使用 V6 预加载但不执行 V5 override；若低于最小置信度则不加载知识，回到 `V5_ONLY`。
 
 ### 12.3 O(1)/bounded loop 说明
 
-- V5 只做常数次 rate 计算和一次策略判断，O(1)。
+- V5 只做常数次 rate 计算和一次策略判断，O(1)，并且只在 policy mode 为 `V5_ONLY` 时执行。
 - V6 查找最多扫描 `ENGINE_KNOWLEDGE_MAX = 8` 个固定条目，是有界循环，不使用 malloc。
 - V6 写入使用环形覆盖，O(1)。
 - 所有 V5/V6 工作都发生在启动开始或启动结束，不进入 ADC/FOC 高频路径。
@@ -570,7 +571,7 @@ engine_stop
 engine_status
 ```
 
-`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、load_delta、compression_ms、stall_ms、obs_stable_ms、last_stop_reason、stability_score、learning_state、learning_window_count、consecutive_success、strategy、knowledge_count、avg_start_time_ms、v6_confidence 和 learning_gain，便于实车判断卡在哪个阶段、学习是否已锁定、V6 是否主导以及 V3 是否仍在学习。
+`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、filtered load_delta、compression_ms、stall_ms、obs_stable_ms、last_stop_reason、stability_score、learning_state、learning_window_count、consecutive_success、strategy、knowledge_count、avg_start_time_ms、v6_confidence、learning_gain 和 policy_mode，便于实车判断卡在哪个阶段、学习是否已锁定、V6 是否主导、V3 是否仍在学习以及当前是 V5_ONLY/V6_ONLY/HYBRID_LOCKED 仲裁模式。
 
 Terminal 命令当前只做 start/stop/status，不负责改参数。调参数优先使用 Lisp。
 

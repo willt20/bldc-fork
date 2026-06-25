@@ -131,6 +131,8 @@
 #define ENGINE_STRATEGY_FAST_START_MS  1500.0f
 #define ENGINE_KNOWLEDGE_MAX           8
 #define ENGINE_KNOWLEDGE_CONFIDENCE_HIGH 0.80f
+#define ENGINE_KNOWLEDGE_CONFIDENCE_MIN  0.45f
+#define ENGINE_ADAPTIVE_GAIN_LOCKED      0.05f
 
 #if ENGINE_START_ENABLE
 typedef enum {
@@ -219,6 +221,12 @@ typedef enum {
 	ENGINE_STRATEGY_HOT_START
 } engine_strategy_t;
 
+typedef enum {
+	ENGINE_POLICY_V5_ONLY = 0,
+	ENGINE_POLICY_V6_ONLY,
+	ENGINE_POLICY_HYBRID_LOCKED
+} engine_policy_mode_t;
+
 typedef struct {
 	float engine_signature_stall_rate;
 	float engine_signature_compression_rate;
@@ -260,6 +268,7 @@ static float engine_start_duty_abs_filt = 0.0f;
 static float engine_start_accel_filt = 0.0f;
 static float engine_start_load_score = 0.0f;
 static float engine_start_load_score_prev = 0.0f;
+static float engine_start_load_delta_raw = 0.0f;
 static float engine_start_load_delta = 0.0f;
 static float engine_start_erpm_prev = 0.0f;
 static float engine_start_current_ripple_filt = 0.0f;
@@ -291,6 +300,7 @@ static int engine_start_knowledge_count = 0;
 static int engine_start_knowledge_pos = 0;
 static bool engine_start_knowledge_saved_for_lock = false;
 static float engine_start_v6_confidence = 0.0f;
+static engine_policy_mode_t engine_start_policy_mode = ENGINE_POLICY_V5_ONLY;
 static int engine_start_consecutive_compression_fail = 0;
 static int engine_start_consecutive_stall_fail = 0;
 static int engine_start_consecutive_no_drive_fail = 0;
@@ -1223,6 +1233,7 @@ bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
 			(float)engine_start_attempt_time_sum_ms / (float)engine_start_attempt_window_count : 0.0f;
 	status->v6_confidence = engine_start_v6_confidence;
 	status->learning_gain = engine_start_learning_gain;
+	status->policy_mode = (int)engine_start_policy_mode;
 	return true;
 }
 
@@ -1247,6 +1258,7 @@ static void engine_start_reset(void) {
 	engine_start_accel_filt = 0.0f;
 	engine_start_load_score = 0.0f;
 	engine_start_load_score_prev = 0.0f;
+	engine_start_load_delta_raw = 0.0f;
 	engine_start_load_delta = 0.0f;
 	engine_start_erpm_prev = 0.0f;
 	engine_start_current_ripple_filt = 0.0f;
@@ -1290,8 +1302,15 @@ void mcpwm_foc_engine_start(void) {
 	}
 
 	engine_start_reset();
-	if (!engine_start_v6_preload_knowledge() ||
-			engine_start_v6_confidence < ENGINE_KNOWLEDGE_CONFIDENCE_HIGH) {
+	if (engine_start_v6_preload_knowledge()) {
+		if (engine_start_v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH) {
+			engine_start_policy_mode = ENGINE_POLICY_V6_ONLY;
+		} else {
+			// Medium-confidence V6 matches keep their preload, but skip V5 override to avoid strategy tug-of-war.
+			engine_start_policy_mode = ENGINE_POLICY_HYBRID_LOCKED;
+		}
+	} else {
+		engine_start_policy_mode = ENGINE_POLICY_V5_ONLY;
 		engine_start_v5_select_strategy();
 	}
 	engine_start_active = true;
@@ -1329,7 +1348,8 @@ static void engine_start_update_filters(float dt) {
 	engine_start_load_score = ENGINE_LOAD_K_CURRENT * engine_start_current_abs_filt +
 			ENGINE_LOAD_K_DUTY * engine_start_duty_abs_filt -
 			ENGINE_LOAD_K_ACCEL * engine_start_accel_filt;
-	engine_start_load_delta = engine_start_load_score - engine_start_load_score_prev;
+	engine_start_load_delta_raw = engine_start_load_score - engine_start_load_score_prev;
+	engine_start_load_delta = engine_start_load_delta_raw;
 	if (fabsf(engine_start_load_delta) < engine_start_load_delta_deadband) {
 		engine_start_load_delta = 0.0f;
 	}
@@ -1535,7 +1555,7 @@ static void engine_start_v4_update(void) {
 			engine_start_v3v4.consecutive_success >= ENGINE_ADAPTIVE_SUCCESS_LOCK &&
 			engine_start_v3v4.stall_fail_count == 0) {
 		engine_start_v3v4.state = ENGINE_STABLE_LOCK;
-		engine_start_learning_gain = 0.0f;
+		engine_start_learning_gain = ENGINE_ADAPTIVE_GAIN_LOCKED;
 	} else if (stall_rate > 0.2f || compression_rate > 0.3f || success_rate < ENGINE_ADAPTIVE_UNLOCK_SUCCESS_RATE) {
 		engine_start_v3v4.state = ENGINE_LEARNING;
 		if (engine_start_learning_gain < ENGINE_ADAPTIVE_GAIN_MIN) {
@@ -1545,10 +1565,6 @@ static void engine_start_v4_update(void) {
 }
 
 static void engine_start_v3_update(engine_start_attempt_result_t result) {
-	if (engine_start_v3v4.state == ENGINE_STABLE_LOCK) {
-		return;
-	}
-
 	float step = ENGINE_ADAPTIVE_STEP * engine_start_learning_gain;
 	switch (result) {
 	case ENGINE_ATTEMPT_COMPRESSION_FAIL:
@@ -1758,6 +1774,10 @@ static bool engine_start_v6_preload_knowledge(void) {
 	}
 
 	engine_start_v6_confidence = 1.0f / (1.0f + best_similarity);
+	if (engine_start_v6_confidence < ENGINE_KNOWLEDGE_CONFIDENCE_MIN) {
+		return false;
+	}
+
 	const engine_start_knowledge_t *knowledge = &engine_start_knowledge[best_ind];
 	engine_start_params.boost_current_1 = knowledge->best_boost_current_1;
 	engine_start_params.boost_current_2 = knowledge->best_boost_current_2;

@@ -13,11 +13,14 @@
 ;  erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta
 ;  compression-ms stall-ms obs-stable-ms last-stop-reason
 ;  stability-score learning-state learning-window-count consecutive-success
-;  strategy knowledge-count avg-start-time-ms v6-confidence learning-gain)
+;  strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode)
 ;
 ; State ids:
 ; 0 IDLE, 1 ALIGN, 2 PULL, 3 LOAD_DETECT, 4 PULSE, 5 GAP,
 ; 6 BACKOFF, 7 RECOVER, 8 ACCEL, 9 BLEND, 10 RUN, 11 RETRY, 12 FAULT
+;
+; Policy modes:
+; 0 V5_ONLY, 1 V6_ONLY, 2 HYBRID_LOCKED
 ;
 ; Stop reasons:
 ; 0 NONE, 1 USER, 2 TIMEOUT, 3 UNDERVOLTAGE, 4 FAULT,
