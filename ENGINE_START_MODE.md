@@ -122,11 +122,12 @@ ENGINE_START_FAULT
 - 如果速度达到 `pull-target-erpm`，进入 `ACCEL`。
 - 否则回到 `PULL` 继续慢拉。
 
-HIGH_LOAD 使用滞回，避免 `load_score` / `load_delta` 在压缩边缘抖动：
+HIGH_LOAD 使用滞回，避免 `load_score` / `load_delta` 在压缩边缘抖动；`load_score` 是主判据，`load_delta` 只作为提前触发辅助：
 
 ```text
 进入：load_score > ENGINE_LOAD_HIGH_SCORE
-      且 load_delta > ENGINE_LOAD_RISE_SCORE
+   或 load_score > ENGINE_LOAD_LOW_SCORE 且 load_delta > ENGINE_LOAD_RISE_SCORE
+   或 compression 已确认
       持续 ENGINE_HIGH_LOAD_ENTER_MS
 退出：load_score < ENGINE_LOAD_LOW_SCORE
       且 load_delta < ENGINE_LOAD_FALL_SCORE
@@ -145,7 +146,8 @@ HIGH_LOAD 使用滞回，避免 `load_score` / `load_delta` 在压缩边缘抖�
 - 默认单个脉冲最大 `boost-pulse-ms = 50ms`。
 - `ENGINE_PULSE_MIN_MS = 50ms` 内禁止提前退出，保证最小能量窗口。
 - 50ms 后如果 rpm 不上升、load 不下降且电流仍高，则提前进入 `GAP`，避免硬顶压缩峰。
-- 如果滤波 ERPM 超过 `boost-success-erpm`，进入 `GAP`，由 GAP 决定是否转入 `ACCEL`。
+- PULSE 以时间为主导逻辑：所有普通退出条件都必须等到 `ENGINE_PULSE_MIN_MS` 之后才允许执行。
+- 如果滤波 ERPM 超过 `boost-success-erpm`，也要在最小能量窗口之后才进入 `GAP`，由 GAP 决定是否转入 `ACCEL`。
 
 ### 4.6 GAP
 
@@ -174,7 +176,7 @@ HIGH_LOAD 使用滞回，避免 `load_score` / `load_delta` 在压缩边缘抖�
 
 ### 4.8 RECOVER
 
-目的：从 BACKOFF 后恢复，避免 BACKOFF / RECOVER 之间抖动。
+目的：从 BACKOFF 后恢复，避免 BACKOFF / RECOVER 之间抖动。状态优先级为 `BACKOFF > RECOVER > PULSE`：PULSE/GAP/ACCEL 遇到确认 stall 会立即转 BACKOFF；RECOVER 保留 200ms 保持时间，若保持后仍 stall 才允许重新转 BACKOFF。
 
 动作：
 
@@ -271,9 +273,9 @@ load_score =
 load_delta = load_score - last_load_score
 ```
 
-其中 `erpm_abs_filt/current_abs_filt/duty_abs_filt` 使用 `ENGINE_LOAD_LP = 0.1` 的 EMA，一阶滤波，保持 MCU 负担很低。
+其中 `erpm_abs_filt/current_abs_filt/duty_abs_filt` 使用 `ENGINE_LOAD_LP = 0.1` 的 EMA，一阶滤波，保持 MCU 负担很低。`load_delta` 不再单独二次 EMA，而是每次更新后直接取 `load_score` 的差分，减少对 10~30ms 压缩冲击的相位延迟。
 
-`load_delta` 用于捕捉压缩负载的快速上升，避免只靠 `load_score` 滞后判断。
+`load_score` 是主判据；`load_delta` 只用于捕捉压缩负载的快速上升，作为提前触发辅助，避免把两个信号等权叠加导致响应变慢。
 
 ### 6.2 压缩点检测
 
@@ -296,7 +298,8 @@ HIGH_LOAD 不是瞬时值，而是锁存状态：
 
 ```text
 进入：load_score > ENGINE_LOAD_HIGH_SCORE
-      且 load_delta > ENGINE_LOAD_RISE_SCORE
+   或 load_score > ENGINE_LOAD_LOW_SCORE 且 load_delta > ENGINE_LOAD_RISE_SCORE
+   或 compression 已确认
       持续 ENGINE_HIGH_LOAD_ENTER_MS
 
 退出：load_score < ENGINE_LOAD_LOW_SCORE
@@ -387,7 +390,7 @@ abs(actual_erpm) >= obs-min-erpm
 
 | C 宏 | 默认值 | 单位 | 作用 |
 |---|---:|---|---|
-| `ENGINE_LOAD_LP` | `0.1` | ratio | `erpm/current/duty/load_delta` 的 EMA 系数；1kHz 更新下响应约 10ms 级 |
+| `ENGINE_LOAD_LP` | `0.1` | ratio | `erpm/current/duty` 的 EMA 系数；`load_delta` 直接由 `load_score` 差分得到，避免二次 EMA 延迟 |
 | `ENGINE_LOAD_K_CURRENT` | `1.0` | score/A | `load_score` 中电流权重 |
 | `ENGINE_LOAD_K_DUTY` | `300.0` | score/duty | `load_score` 中 duty 权重 |
 | `ENGINE_LOAD_K_ACCEL` | `0.02` | score/(eRPM/s) | `load_score` 中加速度权重；减速会提高 load_score |
