@@ -127,6 +127,7 @@ HIGH_LOAD 使用滞回，避免 `load_score` / `load_delta` 在压缩边缘抖�
 ```text
 pre-warning：load_score > (ENGINE_LOAD_HIGH_SCORE + ENGINE_LOAD_LOW_SCORE) / 2
              且 load_delta > ENGINE_LOAD_RISE_SCORE
+             只保持 ENGINE_LOAD_PREWARN_HOLD_MS，用于短时抑制 LOW_LOAD
 进入 HIGH_LOAD：load_score > ENGINE_LOAD_HIGH_SCORE
              或 compression 已确认
              持续 ENGINE_HIGH_LOAD_ENTER_MS
@@ -276,7 +277,7 @@ load_delta = load_score - last_load_score
 
 其中 `erpm_abs_filt/current_abs_filt/duty_abs_filt` 使用 `ENGINE_LOAD_LP = 0.1` 的 EMA，一阶滤波，保持 MCU 负担很低。`load_delta` 不再单独二次 EMA，而是每次更新后直接取 `load_score` 的差分，减少对 10~30ms 压缩冲击的相位延迟。
 
-为了避免无滤波微分信号过敏，`load_delta` 会先经过 `ENGINE_LOAD_DELTA_DEADBAND` 死区，小尖峰直接归零，再通过 `ENGINE_LOAD_DELTA_MAX` 限幅。`load_score` 是 HIGH_LOAD 主判据；`load_delta` 只用于捕捉压缩负载的快速上升并设置 pre-warning，不再直接触发 HIGH_LOAD，避免双通道竞争导致 PULSE/GAP 提前介入。
+为了避免无滤波微分信号过敏，`load_delta` 会先经过 `ENGINE_LOAD_DELTA_DEADBAND` 死区，小尖峰直接归零，再通过 `ENGINE_LOAD_DELTA_MAX` 限幅。`load_score` 是 HIGH_LOAD 主判据；`load_delta` 只用于捕捉压缩负载的快速上升并设置有时限的 pre-warning，不再直接触发 HIGH_LOAD，避免双通道竞争导致 PULSE/GAP 提前介入。pre-warning 只短时抑制 LOW_LOAD，超出 `ENGINE_LOAD_PREWARN_HOLD_MS` 后如果没有新的上升沿会自动释放，避免高惯量工况下长期保守。
 
 ### 6.2 压缩点检测
 
@@ -300,6 +301,7 @@ HIGH_LOAD 不是瞬时值，而是锁存状态：
 ```text
 pre-warning：load_score > (ENGINE_LOAD_HIGH_SCORE + ENGINE_LOAD_LOW_SCORE) / 2
              且 load_delta > ENGINE_LOAD_RISE_SCORE
+             只保持 ENGINE_LOAD_PREWARN_HOLD_MS，用于短时抑制 LOW_LOAD
 
 进入 HIGH_LOAD：load_score > ENGINE_LOAD_HIGH_SCORE
              或 compression 已确认
@@ -403,6 +405,7 @@ abs(actual_erpm) >= obs-min-erpm
 | `ENGINE_LOAD_FALL_SCORE` | `0.0` | score/update | HIGH_LOAD 退出/LOW_LOAD 时的 load_delta 阈值 |
 | `ENGINE_LOAD_DELTA_DEADBAND` | `5.0` | score/update | load_delta 死区，小于该值的噪声尖峰归零 |
 | `ENGINE_LOAD_DELTA_MAX` | `60.0` | score/update | load_delta 限幅，防止高频尖峰直接抢占 HIGH_LOAD |
+| `ENGINE_LOAD_PREWARN_HOLD_MS` | `40` | ms | pre-warning 保持时间；只短时抑制 LOW_LOAD，避免长期拖慢 ACCEL |
 | `ENGINE_HIGH_LOAD_ENTER_MS` | `20` | ms | HIGH_LOAD 进入确认时间 |
 | `ENGINE_HIGH_LOAD_EXIT_MS` | `50` | ms | HIGH_LOAD 退出确认时间 |
 | `ENGINE_PULSE_MIN_MS` | `50` | ms | PULSE 最小能量窗口；小于该时间禁止提前退出 |
