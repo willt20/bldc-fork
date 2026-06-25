@@ -426,7 +426,81 @@ abs(actual_erpm) >= obs-min-erpm
 - 时间类参数必须大于 0，避免除零或无意义状态。
 - 其他参数必须大于等于 0。
 
-## 11. Terminal 使用方法
+## 11. V3/V4 自适应标定与稳定锁定
+
+V3/V4 只做统计、微调和锁定标志，不新增状态机状态，不改 PULSE/GAP/BACKOFF/RECOVER 结构，不改 FOC/PWM/ADC/Observer。所有计算都是固定长度窗口和常数次算术，实时开销为 O(1)。
+
+### 11.1 统计窗口
+
+- 固定窗口：`ENGINE_ADAPTIVE_WINDOW = 16` 次启动结果。
+- 每次启动结束后只写入 1 个结果：`compression_fail`、`stall_fail`、`no_drive_fail`、`rebound_fail` 或 `success`。
+- 环形数组覆盖最老结果，并同步对窗口计数做 `+1/-1`，所以不会 malloc，也不会遍历历史。
+
+### 11.2 V3 参数更新
+
+`engine_start_v3_update()` 只允许小步调整以下内部/运行参数：
+
+- `boost_current_1/2/3`
+- `boost_pulse_ms`
+- `boost_gap_ms`
+- `engine_start_load_high_score`
+- `engine_start_load_delta_deadband`
+- `engine_start_load_prewarn_hold_ms`
+
+调整规则：
+
+- 连续 `ENGINE_ADAPTIVE_FAIL_CONFIRM = 3` 次同类失败后才允许动作。
+- 单次目标步长为 `ENGINE_ADAPTIVE_STEP = 2.5%`。
+- 实际写入通过 `ENGINE_ADAPTIVE_EMA = 0.25` 平滑，避免参数跳变。
+- `ENGINE_STABLE_LOCK` 后禁止继续调整参数，只保留监控。
+
+失败映射：
+
+| 结果 | 调整方向 |
+|---|---|
+| `compression_fail` | 小幅提高 `boost_current_1/2/3`，小幅降低 `load_high_score` 和 `load_delta_deadband`，略增 `prewarn_hold` |
+| `stall_fail` | 小幅增加 `boost_gap_ms` 和 `prewarn_hold`，小幅降低 `boost_current_3`，提高 `load_delta_deadband` |
+| `no_drive_fail` | 小幅增加 `boost_pulse_ms` 和 `boost_current_1`，略降 `prewarn_hold` 避免过度保守 |
+| `rebound_fail` | 小幅降低 `boost_current_3`，小幅增加 `boost_gap_ms` 和 `load_delta_deadband` |
+| `success` | 衰减学习增益，逐步趋向冻结 |
+
+### 11.3 V4 stability_score 和 LOCK
+
+`engine_start_v4_update()` 使用固定窗口计数计算：
+
+```text
+stability_score =
+    success_rate
+  - 0.2 * stall_rate
+  - 0.2 * compression_fail_rate
+  - 0.1 * rebound_rate
+  - 0.1 * no_drive_rate
+```
+
+进入 `ENGINE_STABLE_LOCK` 的条件：
+
+```text
+stability_score > 0.85
+AND consecutive_success >= 5
+AND 窗口内 stall_fail_count == 0
+```
+
+退出锁定/回到学习的条件：
+
+```text
+stall_fail_rate > 20%
+OR compression_fail_rate > 30%
+OR success_rate < 60%
+```
+
+### 11.4 实时开销说明
+
+- 每次 `engine_start_update()` 仍只做状态机和常数次判断。
+- V3/V4 只在启动结束时记录 1 次结果并做固定数量参数更新。
+- 统计窗口是固定 16 项环形缓冲，不遍历历史、不分配内存。
+- 因此实时复杂度为 O(1)，不会影响 ISR/FOC 主控制结构。
+
+## 12. Terminal 使用方法
 
 ### 启动
 
@@ -446,11 +520,11 @@ engine_stop
 engine_status
 ```
 
-`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、load_delta、compression_ms、stall_ms、obs_stable_ms 和 last_stop_reason，便于实车判断卡在哪个阶段。
+`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、load_delta、compression_ms、stall_ms、obs_stable_ms、last_stop_reason、stability_score、learning_state、learning_window_count 和 consecutive_success，便于实车判断卡在哪个阶段以及学习是否已锁定。
 
 Terminal 命令当前只做 start/stop/status，不负责改参数。调参数优先使用 Lisp。
 
-## 12. Lisp 使用方法
+## 13. Lisp 使用方法
 
 根目录提供了完整测试脚本：
 
@@ -526,7 +600,7 @@ ENGINE_START_TEST.lisp
 
 但建议优先使用符号名，避免 ID 顺序记错。
 
-## 13. 实车调参建议
+## 14. 实车调参建议
 
 ### 优先级 1：是否能拉动和冲过压缩点
 
@@ -577,7 +651,7 @@ ENGINE_START_TEST.lisp
 - 接管抖动，提高 `obs-min-erpm` 或 `blend-time-ms`。
 - 接管太晚，降低 `obs-min-erpm`。
 
-## 14. 后续修改注意事项
+## 15. 后续修改注意事项
 
 ### 不建议修改的内容
 
@@ -611,7 +685,7 @@ ENGINE_START_TEST.lisp
 
 当前设计是：Engine Start 未 active 时，状态机立即 return，不影响普通控制。
 
-## 15. 已验证命令
+## 16. 已验证命令
 
 当前已用推荐 ARM GCC 7-2018-q2 工具链通过以下命令验证：
 

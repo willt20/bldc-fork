@@ -103,6 +103,28 @@
 #define ENGINE_BACKOFF_CURRENT     -40.0f
 #define ENGINE_BACKOFF_ERPM        -100.0f
 #define ENGINE_DIRECTION            1.0f
+#define ENGINE_ADAPTIVE_WINDOW       16
+#define ENGINE_ADAPTIVE_FAIL_CONFIRM 3
+#define ENGINE_ADAPTIVE_STEP         0.025f
+#define ENGINE_ADAPTIVE_EMA          0.25f
+#define ENGINE_ADAPTIVE_SCORE_LOCK   0.85f
+#define ENGINE_ADAPTIVE_SUCCESS_LOCK 5
+#define ENGINE_ADAPTIVE_UNLOCK_SUCCESS_RATE 0.60f
+#define ENGINE_ADAPTIVE_GAIN_DECAY   0.90f
+#define ENGINE_ADAPTIVE_GAIN_MIN     0.25f
+#define ENGINE_ADAPTIVE_GAIN_MAX     1.0f
+#define ENGINE_ADAPTIVE_CURRENT_MIN  20.0f
+#define ENGINE_ADAPTIVE_CURRENT_MAX  250.0f
+#define ENGINE_ADAPTIVE_PULSE_MIN_MS 30.0f
+#define ENGINE_ADAPTIVE_PULSE_MAX_MS 100.0f
+#define ENGINE_ADAPTIVE_GAP_MIN_MS   60.0f
+#define ENGINE_ADAPTIVE_GAP_MAX_MS   200.0f
+#define ENGINE_ADAPTIVE_LOAD_HIGH_MIN 80.0f
+#define ENGINE_ADAPTIVE_LOAD_HIGH_MAX 200.0f
+#define ENGINE_ADAPTIVE_DEADBAND_MIN 1.0f
+#define ENGINE_ADAPTIVE_DEADBAND_MAX 20.0f
+#define ENGINE_ADAPTIVE_PREWARN_MIN_MS 30.0f
+#define ENGINE_ADAPTIVE_PREWARN_MAX_MS 80.0f
 
 #if ENGINE_START_ENABLE
 typedef enum {
@@ -159,6 +181,31 @@ typedef struct {
 	float backoff_current;
 	float backoff_erpm;
 } engine_start_params_t;
+
+typedef enum {
+	ENGINE_LEARNING = 0,
+	ENGINE_STABLE_LOCK
+} engine_start_learning_state_t;
+
+typedef struct {
+	int compression_fail_count;
+	int stall_fail_count;
+	int no_drive_fail_count;
+	int rebound_fail_count;
+	int success_count;
+	float stability_score;
+	int consecutive_success;
+	engine_start_learning_state_t state;
+} engine_start_v3v4_t;
+
+typedef enum {
+	ENGINE_ATTEMPT_NONE = 0,
+	ENGINE_ATTEMPT_COMPRESSION_FAIL,
+	ENGINE_ATTEMPT_STALL_FAIL,
+	ENGINE_ATTEMPT_NO_DRIVE_FAIL,
+	ENGINE_ATTEMPT_REBOUND_FAIL,
+	ENGINE_ATTEMPT_SUCCESS
+} engine_start_attempt_result_t;
 #endif
 
 // Private variables
@@ -202,6 +249,22 @@ static int engine_start_stall_ms = 0;
 static int engine_start_compression_ms = 0;
 static int engine_start_obs_stable_ms = 0;
 static engine_start_stop_reason_t engine_start_last_stop_reason = ENGINE_STOP_NONE;
+static bool engine_start_attempt_recorded = false;
+static engine_start_v3v4_t engine_start_v3v4 = {
+	.stability_score = 0.0f,
+	.state = ENGINE_LEARNING
+};
+static engine_start_attempt_result_t engine_start_attempt_window[ENGINE_ADAPTIVE_WINDOW];
+static int engine_start_attempt_window_pos = 0;
+static int engine_start_attempt_window_count = 0;
+static int engine_start_consecutive_compression_fail = 0;
+static int engine_start_consecutive_stall_fail = 0;
+static int engine_start_consecutive_no_drive_fail = 0;
+static int engine_start_consecutive_rebound_fail = 0;
+static float engine_start_learning_gain = ENGINE_ADAPTIVE_GAIN_MAX;
+static float engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
+static float engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
+static float engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
 static engine_start_params_t engine_start_params = {
 	.align_current = ENGINE_ALIGN_CURRENT,
 	.align_time_ms = ENGINE_ALIGN_TIME_MS,
@@ -267,6 +330,11 @@ static void engine_start_params_load_defaults(void);
 static float engine_start_direction(void);
 static void engine_start_fault(engine_start_stop_reason_t reason);
 static float engine_start_select_boost_current(void);
+static void engine_start_v3v4_record(engine_start_attempt_result_t result);
+static void engine_start_v3_update(engine_start_attempt_result_t result);
+static void engine_start_v4_update(void);
+static void engine_start_adapt_param(float *param, float target, float min, float max);
+static engine_start_attempt_result_t engine_start_classify_fault(engine_start_stop_reason_t reason);
 #endif
 
 // Threads
@@ -970,6 +1038,9 @@ static void engine_start_params_load_defaults(void) {
 	engine_start_params.backoff_reverse_enable = ENGINE_BACKOFF_REVERSE_ENABLE;
 	engine_start_params.backoff_current = ENGINE_BACKOFF_CURRENT;
 	engine_start_params.backoff_erpm = ENGINE_BACKOFF_ERPM;
+	engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
+	engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
+	engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
 }
 
 static float *engine_start_param_ptr(engine_start_param_id_t param) {
@@ -1103,6 +1174,10 @@ bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
 	status->stall_ms = engine_start_stall_ms;
 	status->obs_stable_ms = engine_start_obs_stable_ms;
 	status->last_stop_reason = engine_start_last_stop_reason;
+	status->stability_score = engine_start_v3v4.stability_score;
+	status->learning_state = engine_start_v3v4.state;
+	status->learning_window_count = engine_start_attempt_window_count;
+	status->consecutive_success = engine_start_v3v4.consecutive_success;
 	return true;
 }
 
@@ -1141,6 +1216,7 @@ static void engine_start_reset(void) {
 	engine_start_compression_ms = 0;
 	engine_start_obs_stable_ms = 0;
 	engine_start_last_stop_reason = ENGINE_STOP_NONE;
+	engine_start_attempt_recorded = false;
 	engine_start_timer = chVTGetSystemTimeX();
 	engine_start_global_timer = engine_start_timer;
 }
@@ -1205,7 +1281,7 @@ static void engine_start_update_filters(float dt) {
 			ENGINE_LOAD_K_DUTY * engine_start_duty_abs_filt -
 			ENGINE_LOAD_K_ACCEL * engine_start_accel_filt;
 	engine_start_load_delta = engine_start_load_score - engine_start_load_score_prev;
-	if (fabsf(engine_start_load_delta) < ENGINE_LOAD_DELTA_DEADBAND) {
+	if (fabsf(engine_start_load_delta) < engine_start_load_delta_deadband) {
 		engine_start_load_delta = 0.0f;
 	}
 	utils_truncate_number(&engine_start_load_delta, -ENGINE_LOAD_DELTA_MAX, ENGINE_LOAD_DELTA_MAX);
@@ -1238,8 +1314,8 @@ static bool engine_start_detect_stall(void) {
 }
 
 static void engine_start_update_high_load_latch(float dt, bool compression) {
-	float delta_entry_score = (ENGINE_LOAD_HIGH_SCORE + ENGINE_LOAD_LOW_SCORE) * 0.5f;
-	bool score_high = engine_start_load_score > ENGINE_LOAD_HIGH_SCORE;
+	float delta_entry_score = (engine_start_load_high_score + ENGINE_LOAD_LOW_SCORE) * 0.5f;
+	bool score_high = engine_start_load_score > engine_start_load_high_score;
 	bool prewarn_cond = engine_start_load_score > delta_entry_score &&
 			engine_start_load_delta > ENGINE_LOAD_RISE_SCORE;
 	int dt_ms = (int)(dt * 1000.0f);
@@ -1248,7 +1324,7 @@ static void engine_start_update_high_load_latch(float dt, bool compression) {
 	}
 
 	if (prewarn_cond) {
-		engine_start_load_prewarn_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
+		engine_start_load_prewarn_ms = (int)engine_start_load_prewarn_hold_ms;
 	} else if (engine_start_load_prewarn_ms > 0) {
 		engine_start_load_prewarn_ms -= dt_ms;
 		if (engine_start_load_prewarn_ms < 0) {
@@ -1341,6 +1417,7 @@ static void engine_start_enter(engine_start_state_t state) {
 }
 
 static void engine_start_fault(engine_start_stop_reason_t reason) {
+	engine_start_v3v4_record(engine_start_classify_fault(reason));
 	engine_start_stop_output();
 	engine_start_active = false;
 	engine_start_state = ENGINE_START_FAULT;
@@ -1353,6 +1430,168 @@ static float engine_start_select_boost_current(void) {
 	case 2: return engine_start_params.boost_current_2;
 	default: return engine_start_params.boost_current_3;
 	}
+}
+
+static void engine_start_attempt_count(engine_start_attempt_result_t result, int delta) {
+	switch (result) {
+	case ENGINE_ATTEMPT_COMPRESSION_FAIL:
+		engine_start_v3v4.compression_fail_count += delta;
+		break;
+	case ENGINE_ATTEMPT_STALL_FAIL:
+		engine_start_v3v4.stall_fail_count += delta;
+		break;
+	case ENGINE_ATTEMPT_NO_DRIVE_FAIL:
+		engine_start_v3v4.no_drive_fail_count += delta;
+		break;
+	case ENGINE_ATTEMPT_REBOUND_FAIL:
+		engine_start_v3v4.rebound_fail_count += delta;
+		break;
+	case ENGINE_ATTEMPT_SUCCESS:
+		engine_start_v3v4.success_count += delta;
+		break;
+	default:
+		break;
+	}
+}
+
+static void engine_start_adapt_param(float *param, float target, float min, float max) {
+	utils_truncate_number(&target, min, max);
+	*param += (target - *param) * ENGINE_ADAPTIVE_EMA;
+	utils_truncate_number(param, min, max);
+}
+
+static void engine_start_v4_update(void) {
+	int total = engine_start_attempt_window_count;
+	if (total <= 0) {
+		engine_start_v3v4.stability_score = 0.0f;
+		engine_start_v3v4.state = ENGINE_LEARNING;
+		return;
+	}
+
+	float inv_total = 1.0f / (float)total;
+	float success_rate = (float)engine_start_v3v4.success_count * inv_total;
+	float stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
+	float compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
+	float rebound_rate = (float)engine_start_v3v4.rebound_fail_count * inv_total;
+	float no_drive_rate = (float)engine_start_v3v4.no_drive_fail_count * inv_total;
+
+	engine_start_v3v4.stability_score = success_rate -
+			0.2f * stall_rate -
+			0.2f * compression_rate -
+			0.1f * rebound_rate -
+			0.1f * no_drive_rate;
+	utils_truncate_number(&engine_start_v3v4.stability_score, 0.0f, 1.0f);
+
+	if (engine_start_v3v4.stability_score > ENGINE_ADAPTIVE_SCORE_LOCK &&
+			engine_start_v3v4.consecutive_success >= ENGINE_ADAPTIVE_SUCCESS_LOCK &&
+			engine_start_v3v4.stall_fail_count == 0) {
+		engine_start_v3v4.state = ENGINE_STABLE_LOCK;
+	} else if (stall_rate > 0.2f || compression_rate > 0.3f || success_rate < ENGINE_ADAPTIVE_UNLOCK_SUCCESS_RATE) {
+		engine_start_v3v4.state = ENGINE_LEARNING;
+	}
+}
+
+static void engine_start_v3_update(engine_start_attempt_result_t result) {
+	if (engine_start_v3v4.state == ENGINE_STABLE_LOCK) {
+		return;
+	}
+
+	float step = ENGINE_ADAPTIVE_STEP * engine_start_learning_gain;
+	switch (result) {
+	case ENGINE_ATTEMPT_COMPRESSION_FAIL:
+		if (engine_start_consecutive_compression_fail >= ENGINE_ADAPTIVE_FAIL_CONFIRM) {
+			engine_start_adapt_param(&engine_start_params.boost_current_1, engine_start_params.boost_current_1 * (1.0f + step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+			engine_start_adapt_param(&engine_start_params.boost_current_2, engine_start_params.boost_current_2 * (1.0f + step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+			engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * (1.0f + step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+			engine_start_adapt_param(&engine_start_load_high_score, engine_start_load_high_score * (1.0f - step), ENGINE_ADAPTIVE_LOAD_HIGH_MIN, ENGINE_ADAPTIVE_LOAD_HIGH_MAX);
+			engine_start_adapt_param(&engine_start_load_delta_deadband, engine_start_load_delta_deadband * (1.0f - step), ENGINE_ADAPTIVE_DEADBAND_MIN, ENGINE_ADAPTIVE_DEADBAND_MAX);
+			engine_start_adapt_param(&engine_start_load_prewarn_hold_ms, engine_start_load_prewarn_hold_ms * (1.0f + step), ENGINE_ADAPTIVE_PREWARN_MIN_MS, ENGINE_ADAPTIVE_PREWARN_MAX_MS);
+			engine_start_consecutive_compression_fail = 0;
+		}
+		break;
+	case ENGINE_ATTEMPT_STALL_FAIL:
+		if (engine_start_consecutive_stall_fail >= ENGINE_ADAPTIVE_FAIL_CONFIRM) {
+			engine_start_adapt_param(&engine_start_params.boost_gap_ms, engine_start_params.boost_gap_ms * (1.0f + step), ENGINE_ADAPTIVE_GAP_MIN_MS, ENGINE_ADAPTIVE_GAP_MAX_MS);
+			engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * (1.0f - step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+			engine_start_adapt_param(&engine_start_load_delta_deadband, engine_start_load_delta_deadband * (1.0f + step), ENGINE_ADAPTIVE_DEADBAND_MIN, ENGINE_ADAPTIVE_DEADBAND_MAX);
+			engine_start_adapt_param(&engine_start_load_prewarn_hold_ms, engine_start_load_prewarn_hold_ms * (1.0f + step), ENGINE_ADAPTIVE_PREWARN_MIN_MS, ENGINE_ADAPTIVE_PREWARN_MAX_MS);
+			engine_start_consecutive_stall_fail = 0;
+		}
+		break;
+	case ENGINE_ATTEMPT_NO_DRIVE_FAIL:
+		if (engine_start_consecutive_no_drive_fail >= ENGINE_ADAPTIVE_FAIL_CONFIRM) {
+			engine_start_adapt_param(&engine_start_params.boost_pulse_ms, engine_start_params.boost_pulse_ms * (1.0f + step), ENGINE_ADAPTIVE_PULSE_MIN_MS, ENGINE_ADAPTIVE_PULSE_MAX_MS);
+			engine_start_adapt_param(&engine_start_params.boost_current_1, engine_start_params.boost_current_1 * (1.0f + step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+			engine_start_adapt_param(&engine_start_load_prewarn_hold_ms, engine_start_load_prewarn_hold_ms * (1.0f - step), ENGINE_ADAPTIVE_PREWARN_MIN_MS, ENGINE_ADAPTIVE_PREWARN_MAX_MS);
+			engine_start_consecutive_no_drive_fail = 0;
+		}
+		break;
+	case ENGINE_ATTEMPT_REBOUND_FAIL:
+		if (engine_start_consecutive_rebound_fail >= ENGINE_ADAPTIVE_FAIL_CONFIRM) {
+			engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * (1.0f - step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+			engine_start_adapt_param(&engine_start_params.boost_gap_ms, engine_start_params.boost_gap_ms * (1.0f + step), ENGINE_ADAPTIVE_GAP_MIN_MS, ENGINE_ADAPTIVE_GAP_MAX_MS);
+			engine_start_adapt_param(&engine_start_load_delta_deadband, engine_start_load_delta_deadband * (1.0f + step), ENGINE_ADAPTIVE_DEADBAND_MIN, ENGINE_ADAPTIVE_DEADBAND_MAX);
+			engine_start_consecutive_rebound_fail = 0;
+		}
+		break;
+	case ENGINE_ATTEMPT_SUCCESS:
+		engine_start_learning_gain *= ENGINE_ADAPTIVE_GAIN_DECAY;
+		utils_truncate_number(&engine_start_learning_gain, ENGINE_ADAPTIVE_GAIN_MIN, ENGINE_ADAPTIVE_GAIN_MAX);
+		break;
+	default:
+		break;
+	}
+}
+
+static engine_start_attempt_result_t engine_start_classify_fault(engine_start_stop_reason_t reason) {
+	switch (reason) {
+	case ENGINE_STOP_MAX_RETRY:
+	case ENGINE_STOP_STALL:
+		return ENGINE_ATTEMPT_STALL_FAIL;
+	case ENGINE_STOP_MAX_PULSES:
+		return ENGINE_ATTEMPT_COMPRESSION_FAIL;
+	case ENGINE_STOP_TIMEOUT:
+		return engine_start_total_pulse_count == 0 ? ENGINE_ATTEMPT_NO_DRIVE_FAIL : ENGINE_ATTEMPT_COMPRESSION_FAIL;
+	case ENGINE_STOP_OVERCURRENT:
+		return ENGINE_ATTEMPT_REBOUND_FAIL;
+	default:
+		return ENGINE_ATTEMPT_NONE;
+	}
+}
+
+static void engine_start_v3v4_record(engine_start_attempt_result_t result) {
+	if (result == ENGINE_ATTEMPT_NONE || engine_start_attempt_recorded) {
+		return;
+	}
+	engine_start_attempt_recorded = true;
+
+	if (engine_start_attempt_window_count >= ENGINE_ADAPTIVE_WINDOW) {
+		engine_start_attempt_count(engine_start_attempt_window[engine_start_attempt_window_pos], -1);
+	} else {
+		engine_start_attempt_window_count++;
+	}
+
+	engine_start_attempt_window[engine_start_attempt_window_pos] = result;
+	engine_start_attempt_window_pos = (engine_start_attempt_window_pos + 1) % ENGINE_ADAPTIVE_WINDOW;
+	engine_start_attempt_count(result, 1);
+
+	if (result == ENGINE_ATTEMPT_SUCCESS) {
+		engine_start_v3v4.consecutive_success++;
+		engine_start_consecutive_compression_fail = 0;
+		engine_start_consecutive_stall_fail = 0;
+		engine_start_consecutive_no_drive_fail = 0;
+		engine_start_consecutive_rebound_fail = 0;
+	} else {
+		engine_start_v3v4.consecutive_success = 0;
+		engine_start_consecutive_compression_fail = result == ENGINE_ATTEMPT_COMPRESSION_FAIL ? engine_start_consecutive_compression_fail + 1 : 0;
+		engine_start_consecutive_stall_fail = result == ENGINE_ATTEMPT_STALL_FAIL ? engine_start_consecutive_stall_fail + 1 : 0;
+		engine_start_consecutive_no_drive_fail = result == ENGINE_ATTEMPT_NO_DRIVE_FAIL ? engine_start_consecutive_no_drive_fail + 1 : 0;
+		engine_start_consecutive_rebound_fail = result == ENGINE_ATTEMPT_REBOUND_FAIL ? engine_start_consecutive_rebound_fail + 1 : 0;
+	}
+
+	engine_start_v4_update();
+	engine_start_v3_update(result);
+	engine_start_v4_update();
 }
 
 static void engine_start_update(float dt) {
@@ -1544,6 +1783,7 @@ static void engine_start_update(float dt) {
 
 	case ENGINE_START_RUN:
 		// Startup assist is complete; return control to normal FOC current/observer path.
+		engine_start_v3v4_record(ENGINE_ATTEMPT_SUCCESS);
 		engine_start_active = false;
 		mcpwm_foc_set_current(0.0f);
 		break;

@@ -98,6 +98,10 @@ typedef struct {
 	int stall_ms;
 	int obs_stable_ms;
 	int last_stop_reason;
+	float stability_score;
+	int learning_state;
+	int learning_window_count;
+	int consecutive_success;
 } engine_start_status_t;
 
 // Functions

@@ -1989,6 +1989,10 @@ static lbm_value ext_engine_start_status(lbm_value *args, lbm_uint argn) {
 	}
 
 	lbm_value res = ENC_SYM_NIL;
+	res = lbm_cons(lbm_enc_i(status.consecutive_success), res);
+	res = lbm_cons(lbm_enc_i(status.learning_window_count), res);
+	res = lbm_cons(lbm_enc_i(status.learning_state), res);
+	res = lbm_cons(lbm_enc_float(status.stability_score), res);
 	res = lbm_cons(lbm_enc_i(status.last_stop_reason), res);
 	res = lbm_cons(lbm_enc_i(status.obs_stable_ms), res);
 	res = lbm_cons(lbm_enc_i(status.stall_ms), res);

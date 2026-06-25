@@ -1176,6 +1176,9 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 			commands_printf("Engine start stall        : %d ms", status.stall_ms);
 			commands_printf("Engine start obs stable   : %d ms", status.obs_stable_ms);
 			commands_printf("Engine start stop reason  : %s (%d)", stop_reason_name, status.last_stop_reason);
+			commands_printf("Engine start stability    : %.3f", (double)status.stability_score);
+			commands_printf("Engine start learning     : %s (%d)", status.learning_state == 1 ? "STABLE_LOCK" : "LEARNING", status.learning_state);
+			commands_printf("Engine start learn window : %d, consecutive success %d", status.learning_window_count, status.consecutive_success);
 		} else {
 			commands_printf("Engine start status unavailable");
 		}
