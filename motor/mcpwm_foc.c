@@ -195,6 +195,7 @@ static float high_load_release_time = 0.0f;
 static float pulse_min_time_counter = 0.0f;
 static float state_hold_timer = 0.0f;
 static bool engine_start_high_load_latched = false;
+static bool engine_start_load_pre_warning = false;
 static int engine_start_stall_ms = 0;
 static int engine_start_compression_ms = 0;
 static int engine_start_obs_stable_ms = 0;
@@ -1132,6 +1133,7 @@ static void engine_start_reset(void) {
 	pulse_min_time_counter = 0.0f;
 	state_hold_timer = 0.0f;
 	engine_start_high_load_latched = false;
+	engine_start_load_pre_warning = false;
 	engine_start_stall_ms = 0;
 	engine_start_compression_ms = 0;
 	engine_start_obs_stable_ms = 0;
@@ -1235,9 +1237,9 @@ static bool engine_start_detect_stall(void) {
 static void engine_start_update_high_load_latch(float dt, bool compression) {
 	float delta_entry_score = (ENGINE_LOAD_HIGH_SCORE + ENGINE_LOAD_LOW_SCORE) * 0.5f;
 	bool score_high = engine_start_load_score > ENGINE_LOAD_HIGH_SCORE;
-	bool delta_assist = engine_start_load_score > delta_entry_score &&
+	engine_start_load_pre_warning = engine_start_load_score > delta_entry_score &&
 			engine_start_load_delta > ENGINE_LOAD_RISE_SCORE;
-	bool enter_cond = score_high || delta_assist || compression;
+	bool enter_cond = score_high || compression;
 	bool exit_cond = engine_start_load_score < ENGINE_LOAD_LOW_SCORE &&
 			engine_start_load_delta < ENGINE_LOAD_FALL_SCORE &&
 			!compression;
@@ -1273,6 +1275,7 @@ static bool engine_start_high_load(void) {
 static bool engine_start_low_load(void) {
 	return engine_start_load_score <= ENGINE_LOAD_LOW_SCORE &&
 			engine_start_load_delta <= ENGINE_LOAD_FALL_SCORE &&
+			!engine_start_load_pre_warning &&
 			!engine_start_detect_compression() &&
 			!engine_start_high_load_latched;
 }
