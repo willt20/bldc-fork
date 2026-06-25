@@ -1993,6 +1993,8 @@ static lbm_value ext_engine_start_status(lbm_value *args, lbm_uint argn) {
 	res = lbm_cons(lbm_enc_i(status.obs_stable_ms), res);
 	res = lbm_cons(lbm_enc_i(status.stall_ms), res);
 	res = lbm_cons(lbm_enc_i(status.compression_ms), res);
+	res = lbm_cons(lbm_enc_float(status.load_delta), res);
+	res = lbm_cons(lbm_enc_float(status.load_score), res);
 	res = lbm_cons(lbm_enc_float(status.accel_filt), res);
 	res = lbm_cons(lbm_enc_float(status.duty_abs_filt), res);
 	res = lbm_cons(lbm_enc_float(status.current_abs_filt), res);

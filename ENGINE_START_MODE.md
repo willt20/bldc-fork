@@ -48,9 +48,11 @@ Engine Start Mode 当前实现为 FOC 层内的状态机，核心状态如下：
 ENGINE_START_IDLE
 ENGINE_START_ALIGN
 ENGINE_START_PULL
-ENGINE_START_BOOST
-ENGINE_START_PULSE_GAP
+ENGINE_START_LOAD_DETECT
+ENGINE_START_PULSE
+ENGINE_START_GAP
 ENGINE_START_BACKOFF
+ENGINE_START_RECOVER
 ENGINE_START_ACCEL
 ENGINE_START_BLEND
 ENGINE_START_RUN
@@ -99,51 +101,88 @@ ENGINE_START_FAULT
 
 ### 4.3 PULL
 
-目的：慢速开环拖动曲轴，检测是否遇到压缩阻力点。
+目的：慢速开环拖动曲轴，同时给 `LOAD_DETECT` 提供稳定的负载趋势。
 
 动作：
 
 - 输出 `pull-current`。
 - 开环 ERPM 从 `pull-start-erpm` 按 `pull-ramp-erpm-s` 爬升。
 - 最大到 `pull-target-erpm`。
-- 如果压缩点检测成立，进入 BOOST。
-- 如果转速达到 PULL 目标，进入 ACCEL。
+- 如果 compression 成立、HIGH_LOAD 已锁存，或速度达到 PULL 目标，进入 `LOAD_DETECT`。
 
-### 4.4 BOOST
+### 4.4 LOAD_DETECT
+
+目的：根据 `load_score` 和 `load_delta` 判断当前是压缩/高负载，还是可以继续加速。
+
+动作：
+
+- 如果 stall 成立，进入 `BACKOFF`。
+- 如果 HIGH_LOAD 已锁存，进入 `PULSE`。
+- 如果 LOW_LOAD 且速度达到 `boost-success-erpm`，进入 `ACCEL`。
+- 如果速度达到 `pull-target-erpm`，进入 `ACCEL`。
+- 否则回到 `PULL` 继续慢拉。
+
+HIGH_LOAD 使用滞回，避免 `load_score` / `load_delta` 在压缩边缘抖动：
+
+```text
+进入：load_score > ENGINE_LOAD_HIGH_SCORE
+      且 load_delta > ENGINE_LOAD_RISE_SCORE
+      持续 ENGINE_HIGH_LOAD_ENTER_MS
+退出：load_score < ENGINE_LOAD_LOW_SCORE
+      且 load_delta < ENGINE_LOAD_FALL_SCORE
+      且无 compression
+      持续 ENGINE_HIGH_LOAD_EXIT_MS
+```
+
+### 4.5 PULSE
 
 目的：用短脉冲冲过压缩上止点，不再长时间顶住压缩点。
 
 动作：
 
-- 每次进入 BOOST 都增加 `boost_pulse_count` 和 `total_pulse_count`。
+- 每次进入 PULSE 都增加 `boost_pulse_count` 和 `total_pulse_count`。
 - 第 1 / 2 / 3 个脉冲分别使用 `boost-current-1`、`boost-current-2`、`boost-current-3`。
-- 单个脉冲只持续 `boost-pulse-ms`。
-- 如果滤波 ERPM 超过 `boost-success-erpm`，进入 ACCEL。
-- 否则脉冲结束后进入 PULSE_GAP。
+- 默认单个脉冲最大 `boost-pulse-ms = 50ms`。
+- `ENGINE_PULSE_MIN_MS = 50ms` 内禁止提前退出，保证最小能量窗口。
+- 50ms 后如果 rpm 不上升、load 不下降且电流仍高，则提前进入 `GAP`，避免硬顶压缩峰。
+- 如果滤波 ERPM 超过 `boost-success-erpm`，进入 `GAP`，由 GAP 决定是否转入 `ACCEL`。
 
-### 4.5 PULSE_GAP
+### 4.6 GAP
 
-目的：BOOST 脉冲之间卸载/冷却，避免一直大电流顶压缩点。
+目的：PULSE 之间释放压缩阻力，避免连续高电流冲击。
 
 动作：
 
 - 输出 0A。
 - 等待 `boost-gap-ms`。
-- 如果转速超过 `boost-success-erpm`，进入 ACCEL。
-- 如果本轮脉冲次数未超过 `boost-max-pulses` 且总脉冲数未超过 `max-total-pulses`，再次进入 BOOST。
-- 否则进入 BACKOFF。
+- 如果 stall 成立，进入 `BACKOFF`。
+- 如果 LOW_LOAD 且速度超过 `boost-success-erpm`，进入 `ACCEL`。
+- 如果本轮脉冲次数未超过 `boost-max-pulses` 且总脉冲数未超过 `max-total-pulses`，回到 `LOAD_DETECT`。
+- 否则进入 `BACKOFF`。
 
-### 4.6 BACKOFF
+### 4.7 BACKOFF
 
 目的：卡在压缩点时卸力/退让，保护电机、MOS 和电池。
 
 动作：
 
-- 默认 `backoff-reverse-enable = 0`，只输出 0A 并等待 `backoff-ms`。
-- 如后续必须启用反向卸力，只允许小电流、短时间，并且必须充分评估发动机反冲风险。
-- 等待结束后 `retry_count++`，未超过 `max-retry` 则回到 ALIGN，否则进入 FAULT。
+- 立即输出 0A，并清除当前 PULSE 电流。
+- 等待 `backoff-ms`，且 `state_hold_timer` 至少达到 `ENGINE_BACKOFF_RECOVER_HOLD_MS`。
+- `retry_count++`。
+- 如果 `retry_count <= max-retry`，进入 `RECOVER`。
+- 否则进入 `FAULT`。
 
-### 4.7 ACCEL
+### 4.8 RECOVER
+
+目的：从 BACKOFF 后恢复，避免 BACKOFF / RECOVER 之间抖动。
+
+动作：
+
+- 默认输出 0A。
+- 如果 `backoff-reverse-enable = 1`，允许小电流、小速度反向卸力；默认关闭。
+- 必须满足 `ENGINE_BACKOFF_RECOVER_HOLD_MS` 后才允许回到 `ALIGN`。
+
+### 4.9 ACCEL
 
 目的：过压缩点后继续开环加速，给曲轴/转子增加惯量，并等待 Observer 稳定。
 
@@ -152,10 +191,10 @@ ENGINE_START_FAULT
 - 输出 `accel-current`。
 - 开环 ERPM 按 `accel-ramp-erpm-s` 爬升。
 - 最大到 `accel-target-erpm`。
-- 当滤波 ERPM 高于 `obs-min-erpm`、没有 compression/stall 且持续 `obs-stable-time-ms` 后进入 BLEND。
-- 如果 ACCEL 中再次检测到 compression/stall，回到 BOOST。
+- 当滤波 ERPM 高于 `obs-min-erpm`、没有 compression/stall、LOW_LOAD 成立并持续 `obs-stable-time-ms` 后进入 BLEND。
+- 如果 ACCEL 中再次检测到 compression/stall，回到 `LOAD_DETECT`。
 
-### 4.8 BLEND
+### 4.10 BLEND
 
 目的：开环角度平滑融合到 observer 角度，避免硬切。
 
@@ -166,11 +205,11 @@ ENGINE_START_FAULT
 - 用 `utils_angle_difference()` 计算开环角度到 observer 角度的差值。
 - 调用 `mcpwm_foc_set_openloop_phase(accel-current, phase)` 做过渡。
 - 完成后进入 RUN。
-- 如果 BLEND 期间再次检测到 compression/stall，退出 BLEND 并回到 BOOST。
+- 如果 BLEND 期间再次检测到 compression/stall，退出 BLEND 并回到 `LOAD_DETECT`。
 
-注意：BLEND 是第一版简化方案，实车如果 observer 接管抖动，需要后续增强。
+注意：BLEND 是简化交接方案，实车如果 observer 接管抖动，需要继续提高 `obs-min-erpm` 或延长 `blend-time-ms`。
 
-### 4.9 RUN
+### 4.11 RUN
 
 目的：退出启动增强逻辑，交还正常 FOC 控制。
 
@@ -179,7 +218,7 @@ ENGINE_START_FAULT
 - `engine_start_active = false`
 - `mcpwm_foc_set_current(0.0f)`
 
-### 4.10 RETRY
+### 4.12 RETRY
 
 目的：冲压缩失败后等待并重试。
 
@@ -191,7 +230,7 @@ ENGINE_START_FAULT
 - 如果 `retry_count <= max-retry`，回到 ALIGN。
 - 否则进入 FAULT。
 
-### 4.11 FAULT
+### 4.13 FAULT
 
 目的：停止输出并保持故障状态。
 
@@ -208,7 +247,8 @@ ENGINE_START_FAULT
 - 当前 VESC fault 是否为 `FAULT_CODE_NONE`。
 - 输入电压是否低于 Engine Start 专用 `min-vin`。
 - Engine Start 总时间是否超过 `max-start-time-ms`。
-- BOOST 总脉冲次数是否超过 `max-total-pulses`。
+- PULSE 总脉冲次数是否超过 `max-total-pulses`。
+- 滤波电流是否超过内部 `ENGINE_OVERCURRENT_CURRENT`。
 
 任一条件触发：
 
@@ -216,9 +256,26 @@ ENGINE_START_FAULT
 - `engine_start_active = false`。
 - 进入 `ENGINE_START_FAULT`。
 
-## 6. 压缩点检测逻辑
+## 6. 负载、压缩和稳定性检测逻辑
 
-当前压缩点检测由 `engine_start_update_filters()` 先更新低通滤波值，再由 `engine_start_detect_compression()` 判断。
+当前检测由 `engine_start_update_filters()` 先更新低通滤波值，再由 `engine_start_detect_compression()`、`engine_start_high_load()`、`engine_start_low_load()` 判断。
+
+### 6.1 load_score / load_delta
+
+```text
+load_score =
+    ENGINE_LOAD_K_CURRENT * current_abs_filt
+  + ENGINE_LOAD_K_DUTY    * duty_abs_filt
+  - ENGINE_LOAD_K_ACCEL   * accel_filt
+
+load_delta = load_score - last_load_score
+```
+
+其中 `erpm_abs_filt/current_abs_filt/duty_abs_filt` 使用 `ENGINE_LOAD_LP = 0.1` 的 EMA，一阶滤波，保持 MCU 负担很低。
+
+`load_delta` 用于捕捉压缩负载的快速上升，避免只靠 `load_score` 滞后判断。
+
+### 6.2 压缩点检测
 
 判断条件：
 
@@ -232,6 +289,23 @@ duty_abs_filt > stall-duty
 此外还会结合加速度低通值：如果 `accel_filt` 明显为负，同时电流和 duty 较高，也会累计 compression_ms。这比瞬时 rpm/current/duty 判断更不容易误判。
 
 如果任一条件不满足，会重置压缩检测计时器，避免瞬态误判。
+
+### 6.3 HIGH_LOAD 滞回
+
+HIGH_LOAD 不是瞬时值，而是锁存状态：
+
+```text
+进入：load_score > ENGINE_LOAD_HIGH_SCORE
+      且 load_delta > ENGINE_LOAD_RISE_SCORE
+      持续 ENGINE_HIGH_LOAD_ENTER_MS
+
+退出：load_score < ENGINE_LOAD_LOW_SCORE
+      且 load_delta < ENGINE_LOAD_FALL_SCORE
+      且无 compression
+      持续 ENGINE_HIGH_LOAD_EXIT_MS
+```
+
+目的：进入快、退出慢，防止压缩边缘抖动。
 
 ## 7. Observer 稳定判断逻辑
 
@@ -276,15 +350,15 @@ abs(actual_erpm) >= obs-min-erpm
 | `pull-start-erpm` | `ENGINE_START_PARAM_PULL_START_ERPM` | `100.0` | eRPM | PULL 起始开环速度 |
 | `pull-target-erpm` | `ENGINE_START_PARAM_PULL_TARGET_ERPM` | `800.0` | eRPM | PULL 目标速度 |
 | `pull-ramp-erpm-s` | `ENGINE_START_PARAM_PULL_RAMP_ERPM_S` | `800.0` | eRPM/s | PULL 开环速度爬升率 |
-| `boost-current` | `ENGINE_START_PARAM_BOOST_CURRENT` | `100.0` | A | 兼容旧 Lisp 名称；设置时同步到第 1 个 BOOST 脉冲电流 |
-| `boost-time-ms` | `ENGINE_START_PARAM_BOOST_TIME_MS` | `60` | ms | 兼容旧 Lisp 名称；设置时同步到 BOOST 脉冲宽度 |
-| `boost-current-1` | `ENGINE_START_PARAM_BOOST_CURRENT_1` | `100.0` | A | 第 1 个 BOOST 脉冲电流，默认从低电流开始 |
-| `boost-current-2` | `ENGINE_START_PARAM_BOOST_CURRENT_2` | `140.0` | A | 第 2 个 BOOST 脉冲电流 |
-| `boost-current-3` | `ENGINE_START_PARAM_BOOST_CURRENT_3` | `180.0` | A | 第 3 个 BOOST 脉冲电流，默认不超过 180A |
-| `boost-pulse-ms` | `ENGINE_START_PARAM_BOOST_PULSE_MS` | `60` | ms | 单个 BOOST 脉冲宽度 |
-| `boost-gap-ms` | `ENGINE_START_PARAM_BOOST_GAP_MS` | `80` | ms | BOOST 脉冲之间的 0A 间隔 |
-| `boost-max-pulses` | `ENGINE_START_PARAM_BOOST_MAX_PULSES` | `3` | 次 | 单轮压缩点最多脉冲次数 |
-| `boost-success-erpm` | `ENGINE_START_PARAM_BOOST_SUCCESS_ERPM` | `800.0` | eRPM | BOOST 成功后进入 ACCEL 的最低速度 |
+| `boost-current` | `ENGINE_START_PARAM_BOOST_CURRENT` | `160.0` | A | 兼容旧 Lisp 名称；设置时同步到第 1 个 PULSE 电流 |
+| `boost-time-ms` | `ENGINE_START_PARAM_BOOST_TIME_MS` | `50` | ms | 兼容旧 Lisp 名称；设置时同步到 PULSE 脉冲宽度 |
+| `boost-current-1` | `ENGINE_START_PARAM_BOOST_CURRENT_1` | `160.0` | A | 第 1 个 PULSE 脉冲电流 |
+| `boost-current-2` | `ENGINE_START_PARAM_BOOST_CURRENT_2` | `190.0` | A | 第 2 个 PULSE 脉冲电流 |
+| `boost-current-3` | `ENGINE_START_PARAM_BOOST_CURRENT_3` | `220.0` | A | 第 3 个 PULSE 脉冲电流；实车必须从低值验证 |
+| `boost-pulse-ms` | `ENGINE_START_PARAM_BOOST_PULSE_MS` | `50` | ms | 单个 PULSE 最大脉冲宽度；内部还有 `ENGINE_PULSE_MIN_MS` 最小能量窗口 |
+| `boost-gap-ms` | `ENGINE_START_PARAM_BOOST_GAP_MS` | `100` | ms | PULSE 之间的 0A 释放间隔 |
+| `boost-max-pulses` | `ENGINE_START_PARAM_BOOST_MAX_PULSES` | `3` | 次 | 单轮压缩点最多 PULSE 次数 |
+| `boost-success-erpm` | `ENGINE_START_PARAM_BOOST_SUCCESS_ERPM` | `800.0` | eRPM | PULSE/GAP 后允许进入 ACCEL 的最低速度 |
 | `accel-current` | `ENGINE_START_PARAM_ACCEL_CURRENT` | `180.0` | A | ACCEL 加速电流 |
 | `accel-target-erpm` | `ENGINE_START_PARAM_ACCEL_TARGET_ERPM` | `3000.0` | eRPM | ACCEL 目标速度 |
 | `accel-ramp-erpm-s` | `ENGINE_START_PARAM_ACCEL_RAMP_ERPM_S` | `1800.0` | eRPM/s | ACCEL 开环速度爬升率 |
@@ -300,12 +374,34 @@ abs(actual_erpm) >= obs-min-erpm
 | `obs-stable-time-ms` | `ENGINE_START_PARAM_OBS_STABLE_TIME_MS` | `200` | ms | Observer 稳定持续时间 |
 | `direction` | `ENGINE_START_PARAM_DIRECTION` | `1.0` | sign | 开环启动方向，正数为正向，负数为反向 |
 | `stall-confirm-ms` | `ENGINE_START_PARAM_STALL_CONFIRM_MS` | `120` | ms | 卡死保护确认时间 |
-| `max-total-pulses` | `ENGINE_START_PARAM_MAX_TOTAL_PULSES` | `9` | 次 | 整个启动过程最多 BOOST 脉冲数 |
+| `max-total-pulses` | `ENGINE_START_PARAM_MAX_TOTAL_PULSES` | `9` | 次 | 整个启动过程最多 PULSE 脉冲数 |
 | `min-vin` | `ENGINE_START_PARAM_MIN_VIN` | `24.0` | V | Engine Start 最低母线电压 |
 | `backoff-ms` | `ENGINE_START_PARAM_BACKOFF_MS` | `200` | ms | BACKOFF 卸力等待时间 |
 | `backoff-reverse-enable` | `ENGINE_START_PARAM_BACKOFF_REVERSE_ENABLE` | `0` | bool | 是否启用小电流反向卸力；默认关闭 |
 | `backoff-current` | `ENGINE_START_PARAM_BACKOFF_CURRENT` | `-40.0` | A | 反向卸力电流，仅启用 backoff reverse 时使用 |
 | `backoff-erpm` | `ENGINE_START_PARAM_BACKOFF_ERPM` | `-100.0` | eRPM | 反向卸力速度，仅启用 backoff reverse 时使用 |
+
+### 9.1 内部稳定性宏参数
+
+以下参数不是 Lisp 运行时参数，主要用于状态机稳定性和保护。修改它们需要重新编译固件。
+
+| C 宏 | 默认值 | 单位 | 作用 |
+|---|---:|---|---|
+| `ENGINE_LOAD_LP` | `0.1` | ratio | `erpm/current/duty/load_delta` 的 EMA 系数；1kHz 更新下响应约 10ms 级 |
+| `ENGINE_LOAD_K_CURRENT` | `1.0` | score/A | `load_score` 中电流权重 |
+| `ENGINE_LOAD_K_DUTY` | `300.0` | score/duty | `load_score` 中 duty 权重 |
+| `ENGINE_LOAD_K_ACCEL` | `0.02` | score/(eRPM/s) | `load_score` 中加速度权重；减速会提高 load_score |
+| `ENGINE_LOAD_HIGH_SCORE` | `120.0` | score | HIGH_LOAD 进入分数阈值 |
+| `ENGINE_LOAD_LOW_SCORE` | `70.0` | score | HIGH_LOAD 退出/LOW_LOAD 分数阈值 |
+| `ENGINE_LOAD_RISE_SCORE` | `15.0` | score/update | HIGH_LOAD 进入时的 load_delta 上升阈值 |
+| `ENGINE_LOAD_FALL_SCORE` | `0.0` | score/update | HIGH_LOAD 退出/LOW_LOAD 时的 load_delta 阈值 |
+| `ENGINE_HIGH_LOAD_ENTER_MS` | `20` | ms | HIGH_LOAD 进入确认时间 |
+| `ENGINE_HIGH_LOAD_EXIT_MS` | `50` | ms | HIGH_LOAD 退出确认时间 |
+| `ENGINE_PULSE_MIN_MS` | `50` | ms | PULSE 最小能量窗口；小于该时间禁止提前退出 |
+| `ENGINE_STATE_DEBOUNCE_MS` | `10` | ms | 普通状态切换 debounce |
+| `ENGINE_BACKOFF_RECOVER_HOLD_MS` | `200` | ms | BACKOFF / RECOVER 互斥保持时间 |
+| `ENGINE_OVERCURRENT_CURRENT` | `260.0` | A | Engine Start 过流停止阈值 |
+| `ENGINE_RECOVER_MS` | `150` | ms | RECOVER 基础等待时间；实际还受 200ms hold 限制 |
 
 ## 10. 参数合法性检查
 
@@ -339,7 +435,7 @@ engine_stop
 engine_status
 ```
 
-`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、compression_ms、stall_ms、obs_stable_ms 和 last_stop_reason，便于实车判断卡在哪个阶段。
+`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、load_delta、compression_ms、stall_ms、obs_stable_ms 和 last_stop_reason，便于实车判断卡在哪个阶段。
 
 Terminal 命令当前只做 start/stop/status，不负责改参数。调参数优先使用 Lisp。
 
@@ -351,7 +447,7 @@ Terminal 命令当前只做 start/stop/status，不负责改参数。调参数�
 ENGINE_START_TEST.lisp
 ```
 
-该脚本会显式写入 A40 / 29.5V / 21 对极的建议初始值，启动 Engine Start，并以 0.1s 间隔打印 `(engine-status)`，用于记录 `state`、脉冲计数、滤波转速/电流/duty、compression/stall/observer 稳定时间和停止原因。
+该脚本会显式写入 A40 / 29.5V / 21 对极的建议初始值，启动 Engine Start，并以 0.1s 间隔打印 `(engine-status)`，用于记录 `state`、脉冲计数、滤波转速/电流/duty、`load-score`、`load-delta`、compression/stall/observer 稳定时间和停止原因。
 
 ### 启动/停止
 
@@ -359,7 +455,7 @@ ENGINE_START_TEST.lisp
 (engine-start)
 (engine-stop)
 (engine-start-active)
-(engine-status) ; 返回 (state active retry-count boost-pulse-count total-pulse-count openloop-erpm openloop-phase blend iq-target erpm-abs-filt current-abs-filt duty-abs-filt accel-filt compression-ms stall-ms obs-stable-ms last-stop-reason)
+(engine-status) ; 返回 (state active retry-count boost-pulse-count total-pulse-count openloop-erpm openloop-phase blend iq-target erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta compression-ms stall-ms obs-stable-ms last-stop-reason)
 ```
 
 ### 读取参数
@@ -374,10 +470,10 @@ ENGINE_START_TEST.lisp
 
 ```lisp
 (engine-param-set 'boost-current-1 120.0)
-(engine-param-set 'boost-current-2 160.0)
+(engine-param-set 'boost-current-2 150.0)
 (engine-param-set 'boost-current-3 180.0)
-(engine-param-set 'boost-pulse-ms 60)
-(engine-param-set 'boost-gap-ms 80)
+(engine-param-set 'boost-pulse-ms 50)
+(engine-param-set 'boost-gap-ms 100)
 (engine-param-set 'pull-current 110.0)
 (engine-param-set 'stall-duty 0.10)
 (engine-param-set 'direction 1.0) ; 如电机方向相反可改为 -1.0
@@ -397,8 +493,11 @@ ENGINE_START_TEST.lisp
 
 ; 温和一点的首轮参数
 (engine-param-set 'pull-current 100.0)
-(engine-param-set 'boost-current 200.0)
-(engine-param-set 'boost-time-ms 100)
+(engine-param-set 'boost-current-1 120.0)
+(engine-param-set 'boost-current-2 150.0)
+(engine-param-set 'boost-current-3 180.0)
+(engine-param-set 'boost-pulse-ms 50)
+(engine-param-set 'boost-gap-ms 100)
 (engine-param-set 'accel-current 150.0)
 (engine-param-set 'stall-duty 0.10)
 (engine-param-set 'direction 1.0) ; 如电机方向相反可改为 -1.0
@@ -423,8 +522,11 @@ ENGINE_START_TEST.lisp
 重点调：
 
 - `pull-current`
-- `boost-current`
-- `boost-time-ms`
+- `boost-current-1`
+- `boost-current-2`
+- `boost-current-3`
+- `boost-pulse-ms`
+- `boost-gap-ms`
 - `stall-erpm`
 - `stall-current`
 - `stall-duty`
@@ -433,9 +535,10 @@ ENGINE_START_TEST.lisp
 建议：
 
 - 如果慢拉拉不动，提高 `pull-current`。
-- 如果遇到压缩点但冲不过，提高 `boost-current` 或 `boost-time-ms`。
+- 如果遇到压缩点但冲不过，逐步提高 `boost-current-1/2/3` 或 `boost-pulse-ms`，不要直接上 250A。
+- 如果 PULSE 连续撞击太硬，适当增大 `boost-gap-ms`。
 - 如果误判压缩点，提高 `stall-current`、`stall-duty` 或 `compression-time-ms`。
-- 如果明显卡住但不进 BOOST，降低 `stall-current`、`stall-duty` 或缩短 `compression-time-ms`。
+- 如果明显卡住但不进 PULSE，降低 `stall-current`、`stall-duty` 或缩短 `compression-time-ms`，同时检查 `load_score/load_delta` 是否达到 HIGH_LOAD。
 
 ### 优先级 2：过点后是否能稳定加速
 

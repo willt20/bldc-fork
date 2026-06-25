@@ -4,22 +4,22 @@
 ; Safety:
 ; - Put the vehicle/engine in a safe state before running this script.
 ; - Keep a hard power cut-off ready.
-; - The default boost pulses are intentionally limited to 100/140/180 A.
+; - The default boost pulses are 160/190/220 A; reduce these first if MOS/battery margin is unknown.
 ; - If state enters FAULT, run (engine-stop) before starting again.
 ;
 ; engine-status returns:
 ; (state active retry-count boost-pulse-count total-pulse-count
 ;  openloop-erpm openloop-phase blend iq-target
-;  erpm-abs-filt current-abs-filt duty-abs-filt accel-filt
+;  erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta
 ;  compression-ms stall-ms obs-stable-ms last-stop-reason)
 ;
 ; State ids:
-; 0 IDLE, 1 ALIGN, 2 PULL, 3 BOOST, 4 PULSE_GAP, 5 BACKOFF,
-; 6 ACCEL, 7 BLEND, 8 RUN, 9 RETRY, 10 FAULT
+; 0 IDLE, 1 ALIGN, 2 PULL, 3 LOAD_DETECT, 4 PULSE, 5 GAP,
+; 6 BACKOFF, 7 RECOVER, 8 ACCEL, 9 BLEND, 10 RUN, 11 RETRY, 12 FAULT
 ;
 ; Stop reasons:
 ; 0 NONE, 1 USER, 2 TIMEOUT, 3 UNDERVOLTAGE, 4 FAULT,
-; 5 MAX_RETRY, 6 MAX_PULSES, 7 STALL
+; 5 MAX_RETRY, 6 MAX_PULSES, 7 STALL, 8 OVERCURRENT
 
 (defun engine-print-params ()
     {
@@ -78,12 +78,13 @@
         (engine-param-set 'pull-target-erpm 800.0)
         (engine-param-set 'pull-ramp-erpm-s 800.0)
 
-        ; Conservative pulsed boost: default peak <= 180 A.
-        (engine-param-set 'boost-current-1 100.0)
-        (engine-param-set 'boost-current-2 140.0)
-        (engine-param-set 'boost-current-3 180.0)
-        (engine-param-set 'boost-pulse-ms 60.0)
-        (engine-param-set 'boost-gap-ms 80.0)
+        ; Pulsed boost: short 50 ms pulses with a 100 ms release gap.
+        ; Start lower than these values during first hardware shakedown if MOS/battery margin is unknown.
+        (engine-param-set 'boost-current-1 160.0)
+        (engine-param-set 'boost-current-2 190.0)
+        (engine-param-set 'boost-current-3 220.0)
+        (engine-param-set 'boost-pulse-ms 50.0)
+        (engine-param-set 'boost-gap-ms 100.0)
         (engine-param-set 'boost-max-pulses 3.0)
         (engine-param-set 'boost-success-erpm 800.0)
 
