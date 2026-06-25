@@ -105,6 +105,8 @@ typedef struct {
 	int strategy;
 	int knowledge_count;
 	float avg_start_time_ms;
+	float v6_confidence;
+	float learning_gain;
 } engine_start_status_t;
 
 // Functions

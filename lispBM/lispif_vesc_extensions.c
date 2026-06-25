@@ -1989,6 +1989,8 @@ static lbm_value ext_engine_start_status(lbm_value *args, lbm_uint argn) {
 	}
 
 	lbm_value res = ENC_SYM_NIL;
+	res = lbm_cons(lbm_enc_float(status.learning_gain), res);
+	res = lbm_cons(lbm_enc_float(status.v6_confidence), res);
 	res = lbm_cons(lbm_enc_float(status.avg_start_time_ms), res);
 	res = lbm_cons(lbm_enc_i(status.knowledge_count), res);
 	res = lbm_cons(lbm_enc_i(status.strategy), res);

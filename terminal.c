@@ -1181,6 +1181,8 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 			commands_printf("Engine start learn window : %d, consecutive success %d", status.learning_window_count, status.consecutive_success);
 			commands_printf("Engine start strategy     : %d, knowledge entries %d", status.strategy, status.knowledge_count);
 			commands_printf("Engine start avg time     : %.1f ms", (double)status.avg_start_time_ms);
+			commands_printf("Engine start V6 confidence: %.3f", (double)status.v6_confidence);
+			commands_printf("Engine start learn gain   : %.3f", (double)status.learning_gain);
 		} else {
 			commands_printf("Engine start status unavailable");
 		}

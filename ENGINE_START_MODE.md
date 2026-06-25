@@ -477,7 +477,7 @@ stability_score =
   - 0.1 * no_drive_rate
 ```
 
-进入 `ENGINE_STABLE_LOCK` 的条件：
+进入 `ENGINE_STABLE_LOCK` 的条件；进入后 `engine_start_learning_gain` 置 0，冻结 V3 小步学习：
 
 ```text
 stability_score > 0.85
@@ -518,7 +518,7 @@ V5 根据固定窗口内的成功率、stall 率、compression 率、rebound 率
 | `NORMAL_START` | 默认/均衡 | 不额外修正 |
 | `HOT_START` | success_rate 高、无主要失败且 avg_start_time 短 | 小幅降低 boost_current、gap_time、pulse_time |
 
-策略切换要求 `ENGINE_STRATEGY_SWITCH_CONFIRM = 5` 次尝试间隔，避免频繁抖动。策略修正只调用有上下限和 EMA 的参数写入函数。
+如果 V6 高置信度命中知识库，本次启动跳过 V5 策略覆盖。策略切换要求 `ENGINE_STRATEGY_SWITCH_CONFIRM = 5` 次尝试间隔，避免频繁抖动。策略修正只调用有上下限和 EMA 的参数写入函数。
 
 ### 12.2 V6 Knowledge Transfer
 
@@ -531,7 +531,7 @@ V6 使用固定大小知识库：`ENGINE_KNOWLEDGE_MAX = 8`。当 V4 进入 `ENG
 - `boost_pulse_ms`
 - 当前最佳 strategy
 
-下一次启动前，V6 计算相似度并选择最接近的知识条目：
+下一次启动前，V6 计算相似度并选择最接近的知识条目，同时计算 `v6_confidence = 1 / (1 + similarity)`：
 
 ```text
 similarity =
@@ -541,7 +541,7 @@ similarity =
   + abs(avg_start_time_diff / 5000)
 ```
 
-匹配成功后预加载 `boost_current_1/2/3`、`boost_gap_ms`、`boost_pulse_ms` 和 strategy，然后再由 V5 根据当前窗口表现做轻微方向修正。
+匹配成功后预加载 `boost_current_1/2/3`、`boost_gap_ms`、`boost_pulse_ms` 和 strategy。若 `v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH`，本次启动直接使用 V6 经验并跳过 V5 override，避免 V6 历史经验和 V5 当前策略方向冲突；否则再由 V5 根据当前窗口表现做轻微方向修正。
 
 ### 12.3 O(1)/bounded loop 说明
 
@@ -570,7 +570,7 @@ engine_stop
 engine_status
 ```
 
-`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、load_delta、compression_ms、stall_ms、obs_stable_ms、last_stop_reason、stability_score、learning_state、learning_window_count、consecutive_success、strategy、knowledge_count 和 avg_start_time_ms，便于实车判断卡在哪个阶段、学习是否已锁定以及当前策略/知识库是否生效。
+`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、load_delta、compression_ms、stall_ms、obs_stable_ms、last_stop_reason、stability_score、learning_state、learning_window_count、consecutive_success、strategy、knowledge_count、avg_start_time_ms、v6_confidence 和 learning_gain，便于实车判断卡在哪个阶段、学习是否已锁定、V6 是否主导以及 V3 是否仍在学习。
 
 Terminal 命令当前只做 start/stop/status，不负责改参数。调参数优先使用 Lisp。
 
