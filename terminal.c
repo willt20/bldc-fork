@@ -1171,6 +1171,7 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 			commands_printf("Engine start duty filt    : %.3f", (double)status.duty_abs_filt);
 			commands_printf("Engine start accel filt   : %.1f", (double)status.accel_filt);
 			commands_printf("Engine start load score   : %.1f", (double)status.load_score);
+			commands_printf("Engine start load delta   : %.1f", (double)status.load_delta);
 			commands_printf("Engine start compression  : %d ms", status.compression_ms);
 			commands_printf("Engine start stall        : %d ms", status.stall_ms);
 			commands_printf("Engine start obs stable   : %d ms", status.obs_stable_ms);

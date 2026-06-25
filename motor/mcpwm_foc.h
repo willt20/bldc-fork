@@ -93,6 +93,7 @@ typedef struct {
 	float duty_abs_filt;
 	float accel_filt;
 	float load_score;
+	float load_delta;
 	int compression_ms;
 	int stall_ms;
 	int obs_stable_ms;

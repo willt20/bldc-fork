@@ -86,6 +86,9 @@
 #define ENGINE_LOAD_K_ACCEL        0.02f
 #define ENGINE_LOAD_HIGH_SCORE     120.0f
 #define ENGINE_LOAD_LOW_SCORE      70.0f
+#define ENGINE_LOAD_RISE_SCORE     15.0f
+#define ENGINE_LOAD_FALL_SCORE     0.0f
+#define ENGINE_PULSE_MIN_MS        10
 #define ENGINE_OVERCURRENT_CURRENT 260.0f
 #define ENGINE_BACKOFF_MS          200
 #define ENGINE_RECOVER_MS          150
@@ -177,6 +180,8 @@ static float engine_start_current_abs_filt = 0.0f;
 static float engine_start_duty_abs_filt = 0.0f;
 static float engine_start_accel_filt = 0.0f;
 static float engine_start_load_score = 0.0f;
+static float engine_start_load_score_prev = 0.0f;
+static float engine_start_load_delta_filt = 0.0f;
 static float engine_start_erpm_prev = 0.0f;
 static float engine_start_current_ripple_filt = 0.0f;
 static int engine_start_stall_ms = 0;
@@ -1078,6 +1083,7 @@ bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
 	status->duty_abs_filt = engine_start_duty_abs_filt;
 	status->accel_filt = engine_start_accel_filt;
 	status->load_score = engine_start_load_score;
+	status->load_delta = engine_start_load_delta_filt;
 	status->compression_ms = engine_start_compression_ms;
 	status->stall_ms = engine_start_stall_ms;
 	status->obs_stable_ms = engine_start_obs_stable_ms;
@@ -1105,6 +1111,8 @@ static void engine_start_reset(void) {
 	engine_start_duty_abs_filt = 0.0f;
 	engine_start_accel_filt = 0.0f;
 	engine_start_load_score = 0.0f;
+	engine_start_load_score_prev = 0.0f;
+	engine_start_load_delta_filt = 0.0f;
 	engine_start_erpm_prev = 0.0f;
 	engine_start_current_ripple_filt = 0.0f;
 	engine_start_stall_ms = 0;
@@ -1170,9 +1178,12 @@ static void engine_start_update_filters(float dt) {
 	engine_start_duty_abs_filt += (duty_abs - engine_start_duty_abs_filt) * ENGINE_LOAD_LP;
 	engine_start_accel_filt += (accel - engine_start_accel_filt) * ENGINE_LP_SLOW;
 	engine_start_current_ripple_filt += (current_delta - engine_start_current_ripple_filt) * ENGINE_LP_SLOW;
+	engine_start_load_score_prev = engine_start_load_score;
 	engine_start_load_score = ENGINE_LOAD_K_CURRENT * engine_start_current_abs_filt +
 			ENGINE_LOAD_K_DUTY * engine_start_duty_abs_filt -
 			ENGINE_LOAD_K_ACCEL * engine_start_accel_filt;
+	engine_start_load_delta_filt += ((engine_start_load_score - engine_start_load_score_prev) -
+			engine_start_load_delta_filt) * ENGINE_LOAD_LP;
 	engine_start_erpm_prev = erpm;
 
 	bool stall_cond = engine_start_erpm_abs_filt < engine_start_params.stall_erpm &&
@@ -1202,11 +1213,15 @@ static bool engine_start_detect_stall(void) {
 }
 
 static bool engine_start_high_load(void) {
-	return engine_start_load_score >= ENGINE_LOAD_HIGH_SCORE || engine_start_detect_compression();
+	return engine_start_load_score >= ENGINE_LOAD_HIGH_SCORE ||
+			engine_start_load_delta_filt >= ENGINE_LOAD_RISE_SCORE ||
+			engine_start_detect_compression();
 }
 
 static bool engine_start_low_load(void) {
-	return engine_start_load_score <= ENGINE_LOAD_LOW_SCORE && !engine_start_detect_compression();
+	return engine_start_load_score <= ENGINE_LOAD_LOW_SCORE &&
+			engine_start_load_delta_filt <= ENGINE_LOAD_FALL_SCORE &&
+			!engine_start_detect_compression();
 }
 
 static bool engine_start_observer_stable(void) {
@@ -1229,6 +1244,10 @@ static void engine_start_enter(engine_start_state_t state) {
 		engine_start_boost_pulse_count++;
 		engine_start_total_pulse_count++;
 		engine_start_boost_current_now = engine_start_select_boost_current();
+	}
+	if (state == ENGINE_START_BACKOFF) {
+		engine_start_boost_current_now = 0.0f;
+		engine_start_stop_output();
 	}
 	if (state == ENGINE_START_BLEND) {
 		engine_start_blend = 0.0f;
@@ -1284,6 +1303,12 @@ static void engine_start_update(float dt) {
 		return;
 	}
 
+	if (stall && engine_start_state != ENGINE_START_BACKOFF &&
+			engine_start_state != ENGINE_START_RECOVER &&
+			engine_start_state != ENGINE_START_FAULT) {
+		engine_start_enter(ENGINE_START_BACKOFF);
+	}
+
 	if (engine_start_state != ENGINE_START_PULSE &&
 			engine_start_state != ENGINE_START_GAP &&
 			engine_start_state != ENGINE_START_BACKOFF &&
@@ -1335,9 +1360,13 @@ static void engine_start_update(float dt) {
 		break;
 
 	case ENGINE_START_PULSE:
-		// Short graduated current pulse; never hold peak current continuously.
+		// State-triggered pulse: keep current only while rpm rises or load is falling.
 		engine_start_set_openloop_current(engine_start_boost_current_now, engine_start_openloop_erpm, dt);
 		if (engine_start_erpm_abs_filt >= engine_start_params.boost_success_erpm) {
+			engine_start_enter(ENGINE_START_GAP);
+		} else if (engine_start_elapsed_ms(engine_start_timer) >= ENGINE_PULSE_MIN_MS &&
+				engine_start_accel_filt <= 0.0f &&
+				engine_start_load_delta_filt >= 0.0f) {
 			engine_start_enter(ENGINE_START_GAP);
 		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.boost_pulse_ms) {
 			engine_start_enter(ENGINE_START_GAP);
