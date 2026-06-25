@@ -275,25 +275,25 @@ abs(actual_erpm) >= obs-min-erpm
 | `pull-current` | `ENGINE_START_PARAM_PULL_CURRENT` | `120.0` | A | PULL 慢拉电流 |
 | `pull-start-erpm` | `ENGINE_START_PARAM_PULL_START_ERPM` | `100.0` | eRPM | PULL 起始开环速度 |
 | `pull-target-erpm` | `ENGINE_START_PARAM_PULL_TARGET_ERPM` | `800.0` | eRPM | PULL 目标速度 |
-| `pull-ramp-erpm-s` | `ENGINE_START_PARAM_PULL_RAMP_ERPM_S` | `1000.0` | eRPM/s | PULL 开环速度爬升率 |
-| `boost-current` | `ENGINE_START_PARAM_BOOST_CURRENT` | `180.0` | A | 兼容旧 Lisp 名称；设置时同步到第 1 个 BOOST 脉冲电流 |
+| `pull-ramp-erpm-s` | `ENGINE_START_PARAM_PULL_RAMP_ERPM_S` | `800.0` | eRPM/s | PULL 开环速度爬升率 |
+| `boost-current` | `ENGINE_START_PARAM_BOOST_CURRENT` | `100.0` | A | 兼容旧 Lisp 名称；设置时同步到第 1 个 BOOST 脉冲电流 |
 | `boost-time-ms` | `ENGINE_START_PARAM_BOOST_TIME_MS` | `60` | ms | 兼容旧 Lisp 名称；设置时同步到 BOOST 脉冲宽度 |
-| `boost-current-1` | `ENGINE_START_PARAM_BOOST_CURRENT_1` | `180.0` | A | 第 1 个 BOOST 脉冲电流，默认不超过 180A |
-| `boost-current-2` | `ENGINE_START_PARAM_BOOST_CURRENT_2` | `220.0` | A | 第 2 个 BOOST 脉冲电流 |
-| `boost-current-3` | `ENGINE_START_PARAM_BOOST_CURRENT_3` | `250.0` | A | 第 3 个 BOOST 脉冲电流，仅短脉冲使用 |
+| `boost-current-1` | `ENGINE_START_PARAM_BOOST_CURRENT_1` | `100.0` | A | 第 1 个 BOOST 脉冲电流，默认从低电流开始 |
+| `boost-current-2` | `ENGINE_START_PARAM_BOOST_CURRENT_2` | `140.0` | A | 第 2 个 BOOST 脉冲电流 |
+| `boost-current-3` | `ENGINE_START_PARAM_BOOST_CURRENT_3` | `180.0` | A | 第 3 个 BOOST 脉冲电流，默认不超过 180A |
 | `boost-pulse-ms` | `ENGINE_START_PARAM_BOOST_PULSE_MS` | `60` | ms | 单个 BOOST 脉冲宽度 |
 | `boost-gap-ms` | `ENGINE_START_PARAM_BOOST_GAP_MS` | `80` | ms | BOOST 脉冲之间的 0A 间隔 |
 | `boost-max-pulses` | `ENGINE_START_PARAM_BOOST_MAX_PULSES` | `3` | 次 | 单轮压缩点最多脉冲次数 |
-| `boost-success-erpm` | `ENGINE_START_PARAM_BOOST_SUCCESS_ERPM` | `300.0` | eRPM | BOOST 成功后进入 ACCEL 的最低速度 |
+| `boost-success-erpm` | `ENGINE_START_PARAM_BOOST_SUCCESS_ERPM` | `800.0` | eRPM | BOOST 成功后进入 ACCEL 的最低速度 |
 | `accel-current` | `ENGINE_START_PARAM_ACCEL_CURRENT` | `180.0` | A | ACCEL 加速电流 |
-| `accel-target-erpm` | `ENGINE_START_PARAM_ACCEL_TARGET_ERPM` | `1800.0` | eRPM | ACCEL 目标速度 |
-| `accel-ramp-erpm-s` | `ENGINE_START_PARAM_ACCEL_RAMP_ERPM_S` | `2000.0` | eRPM/s | ACCEL 开环速度爬升率 |
-| `obs-min-erpm` | `ENGINE_START_PARAM_OBS_MIN_ERPM` | `1800.0` | eRPM | Observer 接管最低速度 |
+| `accel-target-erpm` | `ENGINE_START_PARAM_ACCEL_TARGET_ERPM` | `3000.0` | eRPM | ACCEL 目标速度 |
+| `accel-ramp-erpm-s` | `ENGINE_START_PARAM_ACCEL_RAMP_ERPM_S` | `1800.0` | eRPM/s | ACCEL 开环速度爬升率 |
+| `obs-min-erpm` | `ENGINE_START_PARAM_OBS_MIN_ERPM` | `2500.0` | eRPM | Observer 接管最低速度 |
 | `blend-time-ms` | `ENGINE_START_PARAM_BLEND_TIME_MS` | `300` | ms | 开环角度融合到 observer 的时间 |
 | `retry-delay-ms` | `ENGINE_START_PARAM_RETRY_DELAY_MS` | `300` | ms | RETRY 停顿时间 |
 | `max-retry` | `ENGINE_START_PARAM_MAX_RETRY` | `3` | 次 | 最大重试次数 |
 | `max-start-time-ms` | `ENGINE_START_PARAM_MAX_START_TIME_MS` | `5000` | ms | 启动总超时 |
-| `stall-erpm` | `ENGINE_START_PARAM_STALL_ERPM` | `150.0` | eRPM | 压缩/卡滞低速阈值 |
+| `stall-erpm` | `ENGINE_START_PARAM_STALL_ERPM` | `300.0` | eRPM | 压缩/卡滞低速阈值 |
 | `stall-current` | `ENGINE_START_PARAM_STALL_CURRENT` | `100.0` | A | 压缩/卡滞电流阈值 |
 | `stall-duty` | `ENGINE_START_PARAM_STALL_DUTY` | `0.12` | duty | 压缩/卡滞 duty 阈值 |
 | `compression-time-ms` | `ENGINE_START_PARAM_COMPRESSION_TIME_MS` | `50` | ms | 压缩点检测持续时间 |
@@ -301,7 +301,7 @@ abs(actual_erpm) >= obs-min-erpm
 | `direction` | `ENGINE_START_PARAM_DIRECTION` | `1.0` | sign | 开环启动方向，正数为正向，负数为反向 |
 | `stall-confirm-ms` | `ENGINE_START_PARAM_STALL_CONFIRM_MS` | `120` | ms | 卡死保护确认时间 |
 | `max-total-pulses` | `ENGINE_START_PARAM_MAX_TOTAL_PULSES` | `9` | 次 | 整个启动过程最多 BOOST 脉冲数 |
-| `min-vin` | `ENGINE_START_PARAM_MIN_VIN` | `20.0` | V | Engine Start 最低母线电压 |
+| `min-vin` | `ENGINE_START_PARAM_MIN_VIN` | `24.0` | V | Engine Start 最低母线电压 |
 | `backoff-ms` | `ENGINE_START_PARAM_BACKOFF_MS` | `200` | ms | BACKOFF 卸力等待时间 |
 | `backoff-reverse-enable` | `ENGINE_START_PARAM_BACKOFF_REVERSE_ENABLE` | `0` | bool | 是否启用小电流反向卸力；默认关闭 |
 | `backoff-current` | `ENGINE_START_PARAM_BACKOFF_CURRENT` | `-40.0` | A | 反向卸力电流，仅启用 backoff reverse 时使用 |
@@ -344,6 +344,14 @@ engine_status
 Terminal 命令当前只做 start/stop/status，不负责改参数。调参数优先使用 Lisp。
 
 ## 12. Lisp 使用方法
+
+根目录提供了完整测试脚本：
+
+```text
+ENGINE_START_TEST.lisp
+```
+
+该脚本会显式写入 A40 / 29.5V / 21 对极的建议初始值，启动 Engine Start，并以 0.1s 间隔打印 `(engine-status)`，用于记录 `state`、脉冲计数、滤波转速/电流/duty、compression/stall/observer 稳定时间和停止原因。
 
 ### 启动/停止
 
