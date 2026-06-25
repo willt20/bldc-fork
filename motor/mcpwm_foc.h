@@ -74,7 +74,8 @@ typedef enum {
 	ENGINE_STOP_FAULT,
 	ENGINE_STOP_MAX_RETRY,
 	ENGINE_STOP_MAX_PULSES,
-	ENGINE_STOP_STALL
+	ENGINE_STOP_STALL,
+	ENGINE_STOP_OVERCURRENT
 } engine_start_stop_reason_t;
 
 typedef struct {
@@ -91,6 +92,7 @@ typedef struct {
 	float current_abs_filt;
 	float duty_abs_filt;
 	float accel_filt;
+	float load_score;
 	int compression_ms;
 	int stall_ms;
 	int obs_stable_ms;

@@ -1140,12 +1140,13 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 		engine_start_status_t status;
 		if (mcpwm_foc_engine_start_get_status(&status)) {
 			static const char *state_names[] = {
-				"IDLE", "ALIGN", "PULL", "BOOST", "PULSE_GAP",
-				"BACKOFF", "ACCEL", "BLEND", "RUN", "RETRY", "FAULT"
+				"IDLE", "ALIGN", "PULL", "LOAD_DETECT", "PULSE",
+				"GAP", "BACKOFF", "RECOVER", "ACCEL", "BLEND", "RUN",
+				"RETRY", "FAULT"
 			};
 			static const char *stop_reason_names[] = {
 				"NONE", "USER", "TIMEOUT", "UNDERVOLTAGE", "FAULT",
-				"MAX_RETRY", "MAX_PULSES", "STALL"
+				"MAX_RETRY", "MAX_PULSES", "STALL", "OVERCURRENT"
 			};
 			const char *state_name = "UNKNOWN";
 			if (status.state >= 0 && status.state < (int)(sizeof(state_names) / sizeof(state_names[0]))) {
@@ -1169,6 +1170,7 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 			commands_printf("Engine start current filt : %.1f", (double)status.current_abs_filt);
 			commands_printf("Engine start duty filt    : %.3f", (double)status.duty_abs_filt);
 			commands_printf("Engine start accel filt   : %.1f", (double)status.accel_filt);
+			commands_printf("Engine start load score   : %.1f", (double)status.load_score);
 			commands_printf("Engine start compression  : %d ms", status.compression_ms);
 			commands_printf("Engine start stall        : %d ms", status.stall_ms);
 			commands_printf("Engine start obs stable   : %d ms", status.obs_stable_ms);
