@@ -125,6 +125,11 @@
 #define ENGINE_ADAPTIVE_DEADBAND_MAX 20.0f
 #define ENGINE_ADAPTIVE_PREWARN_MIN_MS 30.0f
 #define ENGINE_ADAPTIVE_PREWARN_MAX_MS 80.0f
+#define ENGINE_STRATEGY_SWITCH_CONFIRM 5
+#define ENGINE_STRATEGY_COLD_RATE      0.20f
+#define ENGINE_STRATEGY_STABLE_RATE    0.80f
+#define ENGINE_STRATEGY_FAST_START_MS  1500.0f
+#define ENGINE_KNOWLEDGE_MAX           8
 
 #if ENGINE_START_ENABLE
 typedef enum {
@@ -206,6 +211,25 @@ typedef enum {
 	ENGINE_ATTEMPT_REBOUND_FAIL,
 	ENGINE_ATTEMPT_SUCCESS
 } engine_start_attempt_result_t;
+
+typedef enum {
+	ENGINE_STRATEGY_COLD_START = 0,
+	ENGINE_STRATEGY_NORMAL_START,
+	ENGINE_STRATEGY_HOT_START
+} engine_strategy_t;
+
+typedef struct {
+	float engine_signature_stall_rate;
+	float engine_signature_compression_rate;
+	float engine_signature_rebound_rate;
+	float engine_signature_avg_start_time;
+	float best_boost_current_1;
+	float best_boost_current_2;
+	float best_boost_current_3;
+	float best_gap_time;
+	float best_pulse_time;
+	engine_strategy_t best_strategy;
+} engine_start_knowledge_t;
 #endif
 
 // Private variables
@@ -257,6 +281,14 @@ static engine_start_v3v4_t engine_start_v3v4 = {
 static engine_start_attempt_result_t engine_start_attempt_window[ENGINE_ADAPTIVE_WINDOW];
 static int engine_start_attempt_window_pos = 0;
 static int engine_start_attempt_window_count = 0;
+static int engine_start_attempt_time_window[ENGINE_ADAPTIVE_WINDOW];
+static int engine_start_attempt_time_sum_ms = 0;
+static engine_strategy_t engine_start_strategy = ENGINE_STRATEGY_NORMAL_START;
+static int engine_start_strategy_attempts_since_switch = ENGINE_STRATEGY_SWITCH_CONFIRM;
+static engine_start_knowledge_t engine_start_knowledge[ENGINE_KNOWLEDGE_MAX];
+static int engine_start_knowledge_count = 0;
+static int engine_start_knowledge_pos = 0;
+static bool engine_start_knowledge_saved_for_lock = false;
 static int engine_start_consecutive_compression_fail = 0;
 static int engine_start_consecutive_stall_fail = 0;
 static int engine_start_consecutive_no_drive_fail = 0;
@@ -335,6 +367,11 @@ static void engine_start_v3_update(engine_start_attempt_result_t result);
 static void engine_start_v4_update(void);
 static void engine_start_adapt_param(float *param, float target, float min, float max);
 static engine_start_attempt_result_t engine_start_classify_fault(engine_start_stop_reason_t reason);
+static void engine_start_v5_select_strategy(void);
+static void engine_start_v5_apply_strategy(engine_strategy_t strategy);
+static void engine_start_v6_save_knowledge(void);
+static bool engine_start_v6_preload_knowledge(void);
+static float engine_start_v6_similarity(const engine_start_knowledge_t *knowledge);
 #endif
 
 // Threads
@@ -1178,6 +1215,10 @@ bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
 	status->learning_state = engine_start_v3v4.state;
 	status->learning_window_count = engine_start_attempt_window_count;
 	status->consecutive_success = engine_start_v3v4.consecutive_success;
+	status->strategy = engine_start_strategy;
+	status->knowledge_count = engine_start_knowledge_count;
+	status->avg_start_time_ms = engine_start_attempt_window_count > 0 ?
+			(float)engine_start_attempt_time_sum_ms / (float)engine_start_attempt_window_count : 0.0f;
 	return true;
 }
 
@@ -1245,6 +1286,8 @@ void mcpwm_foc_engine_start(void) {
 	}
 
 	engine_start_reset();
+	engine_start_v6_preload_knowledge();
+	engine_start_v5_select_strategy();
 	engine_start_active = true;
 	engine_start_state = ENGINE_START_ALIGN;
 	engine_start_timer = chVTGetSystemTimeX();
@@ -1565,11 +1608,17 @@ static void engine_start_v3v4_record(engine_start_attempt_result_t result) {
 	}
 	engine_start_attempt_recorded = true;
 
+	int elapsed_ms = engine_start_elapsed_ms(engine_start_global_timer);
 	if (engine_start_attempt_window_count >= ENGINE_ADAPTIVE_WINDOW) {
 		engine_start_attempt_count(engine_start_attempt_window[engine_start_attempt_window_pos], -1);
+		engine_start_attempt_time_sum_ms -= engine_start_attempt_time_window[engine_start_attempt_window_pos];
 	} else {
 		engine_start_attempt_window_count++;
 	}
+
+	engine_start_attempt_time_window[engine_start_attempt_window_pos] = elapsed_ms;
+	engine_start_attempt_time_sum_ms += elapsed_ms;
+	engine_start_strategy_attempts_since_switch++;
 
 	engine_start_attempt_window[engine_start_attempt_window_pos] = result;
 	engine_start_attempt_window_pos = (engine_start_attempt_window_pos + 1) % ENGINE_ADAPTIVE_WINDOW;
@@ -1592,6 +1641,119 @@ static void engine_start_v3v4_record(engine_start_attempt_result_t result) {
 	engine_start_v4_update();
 	engine_start_v3_update(result);
 	engine_start_v4_update();
+	if (engine_start_v3v4.state == ENGINE_STABLE_LOCK && !engine_start_knowledge_saved_for_lock) {
+		engine_start_v6_save_knowledge();
+		engine_start_knowledge_saved_for_lock = true;
+	} else if (engine_start_v3v4.state == ENGINE_LEARNING) {
+		engine_start_knowledge_saved_for_lock = false;
+	}
+}
+
+
+static void engine_start_v5_apply_strategy(engine_strategy_t strategy) {
+	if (strategy == ENGINE_STRATEGY_COLD_START) {
+		engine_start_adapt_param(&engine_start_params.boost_current_1, engine_start_params.boost_current_1 * 1.03f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+		engine_start_adapt_param(&engine_start_params.boost_current_2, engine_start_params.boost_current_2 * 1.03f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+		engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * 1.03f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+		engine_start_adapt_param(&engine_start_params.boost_gap_ms, engine_start_params.boost_gap_ms * 1.03f, ENGINE_ADAPTIVE_GAP_MIN_MS, ENGINE_ADAPTIVE_GAP_MAX_MS);
+		engine_start_adapt_param(&engine_start_params.boost_pulse_ms, engine_start_params.boost_pulse_ms * 1.03f, ENGINE_ADAPTIVE_PULSE_MIN_MS, ENGINE_ADAPTIVE_PULSE_MAX_MS);
+	} else if (strategy == ENGINE_STRATEGY_HOT_START) {
+		engine_start_adapt_param(&engine_start_params.boost_current_1, engine_start_params.boost_current_1 * 0.97f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+		engine_start_adapt_param(&engine_start_params.boost_current_2, engine_start_params.boost_current_2 * 0.97f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+		engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * 0.97f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
+		engine_start_adapt_param(&engine_start_params.boost_gap_ms, engine_start_params.boost_gap_ms * 0.97f, ENGINE_ADAPTIVE_GAP_MIN_MS, ENGINE_ADAPTIVE_GAP_MAX_MS);
+		engine_start_adapt_param(&engine_start_params.boost_pulse_ms, engine_start_params.boost_pulse_ms * 0.97f, ENGINE_ADAPTIVE_PULSE_MIN_MS, ENGINE_ADAPTIVE_PULSE_MAX_MS);
+	}
+}
+
+static void engine_start_v5_select_strategy(void) {
+	if (engine_start_attempt_window_count <= 0 ||
+			engine_start_strategy_attempts_since_switch < ENGINE_STRATEGY_SWITCH_CONFIRM) {
+		return;
+	}
+
+	float inv_total = 1.0f / (float)engine_start_attempt_window_count;
+	float success_rate = (float)engine_start_v3v4.success_count * inv_total;
+	float stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
+	float compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
+	float rebound_rate = (float)engine_start_v3v4.rebound_fail_count * inv_total;
+	float avg_start_time = (float)engine_start_attempt_time_sum_ms * inv_total;
+	engine_strategy_t next = ENGINE_STRATEGY_NORMAL_START;
+
+	if (stall_rate > ENGINE_STRATEGY_COLD_RATE || compression_rate > ENGINE_STRATEGY_COLD_RATE) {
+		next = ENGINE_STRATEGY_COLD_START;
+	} else if (success_rate > ENGINE_STRATEGY_STABLE_RATE &&
+			stall_rate <= 0.0f && compression_rate <= 0.0f && rebound_rate <= 0.0f &&
+			avg_start_time > 0.0f && avg_start_time < ENGINE_STRATEGY_FAST_START_MS) {
+		next = ENGINE_STRATEGY_HOT_START;
+	}
+
+	if (next != engine_start_strategy) {
+		engine_start_strategy = next;
+		engine_start_strategy_attempts_since_switch = 0;
+		engine_start_v5_apply_strategy(next);
+	}
+}
+
+static float engine_start_v6_similarity(const engine_start_knowledge_t *knowledge) {
+	if (!knowledge || engine_start_attempt_window_count <= 0) {
+		return 1.0e9f;
+	}
+	float inv_total = 1.0f / (float)engine_start_attempt_window_count;
+	float stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
+	float compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
+	float rebound_rate = (float)engine_start_v3v4.rebound_fail_count * inv_total;
+	float avg_start_time = (float)engine_start_attempt_time_sum_ms * inv_total;
+	return fabsf(stall_rate - knowledge->engine_signature_stall_rate) +
+			fabsf(compression_rate - knowledge->engine_signature_compression_rate) +
+			fabsf(rebound_rate - knowledge->engine_signature_rebound_rate) +
+			fabsf((avg_start_time - knowledge->engine_signature_avg_start_time) / 5000.0f);
+}
+
+static void engine_start_v6_save_knowledge(void) {
+	if (engine_start_attempt_window_count <= 0) {
+		return;
+	}
+	float inv_total = 1.0f / (float)engine_start_attempt_window_count;
+	engine_start_knowledge_t *knowledge = &engine_start_knowledge[engine_start_knowledge_pos];
+	knowledge->engine_signature_stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
+	knowledge->engine_signature_compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
+	knowledge->engine_signature_rebound_rate = (float)engine_start_v3v4.rebound_fail_count * inv_total;
+	knowledge->engine_signature_avg_start_time = (float)engine_start_attempt_time_sum_ms * inv_total;
+	knowledge->best_boost_current_1 = engine_start_params.boost_current_1;
+	knowledge->best_boost_current_2 = engine_start_params.boost_current_2;
+	knowledge->best_boost_current_3 = engine_start_params.boost_current_3;
+	knowledge->best_gap_time = engine_start_params.boost_gap_ms;
+	knowledge->best_pulse_time = engine_start_params.boost_pulse_ms;
+	knowledge->best_strategy = engine_start_strategy;
+	engine_start_knowledge_pos = (engine_start_knowledge_pos + 1) % ENGINE_KNOWLEDGE_MAX;
+	if (engine_start_knowledge_count < ENGINE_KNOWLEDGE_MAX) {
+		engine_start_knowledge_count++;
+	}
+}
+
+static bool engine_start_v6_preload_knowledge(void) {
+	if (engine_start_knowledge_count <= 0) {
+		return false;
+	}
+	int best_ind = 0;
+	float best_similarity = engine_start_v6_similarity(&engine_start_knowledge[0]);
+	for (int i = 1;i < engine_start_knowledge_count;i++) {
+		float similarity = engine_start_v6_similarity(&engine_start_knowledge[i]);
+		if (similarity < best_similarity) {
+			best_similarity = similarity;
+			best_ind = i;
+		}
+	}
+
+	const engine_start_knowledge_t *knowledge = &engine_start_knowledge[best_ind];
+	engine_start_params.boost_current_1 = knowledge->best_boost_current_1;
+	engine_start_params.boost_current_2 = knowledge->best_boost_current_2;
+	engine_start_params.boost_current_3 = knowledge->best_boost_current_3;
+	engine_start_params.boost_gap_ms = knowledge->best_gap_time;
+	engine_start_params.boost_pulse_ms = knowledge->best_pulse_time;
+	engine_start_strategy = knowledge->best_strategy;
+	return true;
 }
 
 static void engine_start_update(float dt) {

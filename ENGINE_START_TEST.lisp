@@ -12,7 +12,8 @@
 ;  openloop-erpm openloop-phase blend iq-target
 ;  erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta
 ;  compression-ms stall-ms obs-stable-ms last-stop-reason
-;  stability-score learning-state learning-window-count consecutive-success)
+;  stability-score learning-state learning-window-count consecutive-success
+;  strategy knowledge-count avg-start-time-ms)
 ;
 ; State ids:
 ; 0 IDLE, 1 ALIGN, 2 PULL, 3 LOAD_DETECT, 4 PULSE, 5 GAP,

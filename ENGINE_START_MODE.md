@@ -500,7 +500,57 @@ OR success_rate < 60%
 - 统计窗口是固定 16 项环形缓冲，不遍历历史、不分配内存。
 - 因此实时复杂度为 O(1)，不会影响 ISR/FOC 主控制结构。
 
-## 12. Terminal 使用方法
+## 12. V5/V6 策略选择与知识迁移
+
+V5/V6 只在启动开始或启动结束时执行，不新增状态机状态，不改变 PULSE/GAP/BACKOFF/RECOVER 核心逻辑。执行顺序为：
+
+```text
+V6 经验预加载 -> V5 策略修正 -> V3 小步微调 -> V4 稳定评分/锁定 -> V6 写回知识
+```
+
+### 12.1 V5 Strategy Selector
+
+V5 根据固定窗口内的成功率、stall 率、compression 率、rebound 率和平均启动时间选择策略：
+
+| 策略 | 条件 | 参数方向 |
+|---|---|---|
+| `COLD_START` | stall_rate 或 compression_rate 高 | 小幅提高 boost_current、gap_time、pulse_time |
+| `NORMAL_START` | 默认/均衡 | 不额外修正 |
+| `HOT_START` | success_rate 高、无主要失败且 avg_start_time 短 | 小幅降低 boost_current、gap_time、pulse_time |
+
+策略切换要求 `ENGINE_STRATEGY_SWITCH_CONFIRM = 5` 次尝试间隔，避免频繁抖动。策略修正只调用有上下限和 EMA 的参数写入函数。
+
+### 12.2 V6 Knowledge Transfer
+
+V6 使用固定大小知识库：`ENGINE_KNOWLEDGE_MAX = 8`。当 V4 进入 `ENGINE_STABLE_LOCK` 时，把当前稳定参数写入知识条目：
+
+- stall/compression/rebound 率
+- 平均启动时间
+- `boost_current_1/2/3`
+- `boost_gap_ms`
+- `boost_pulse_ms`
+- 当前最佳 strategy
+
+下一次启动前，V6 计算相似度并选择最接近的知识条目：
+
+```text
+similarity =
+    abs(stall_rate_diff)
+  + abs(compression_rate_diff)
+  + abs(rebound_rate_diff)
+  + abs(avg_start_time_diff / 5000)
+```
+
+匹配成功后预加载 `boost_current_1/2/3`、`boost_gap_ms`、`boost_pulse_ms` 和 strategy，然后再由 V5 根据当前窗口表现做轻微方向修正。
+
+### 12.3 O(1)/bounded loop 说明
+
+- V5 只做常数次 rate 计算和一次策略判断，O(1)。
+- V6 查找最多扫描 `ENGINE_KNOWLEDGE_MAX = 8` 个固定条目，是有界循环，不使用 malloc。
+- V6 写入使用环形覆盖，O(1)。
+- 所有 V5/V6 工作都发生在启动开始或启动结束，不进入 ADC/FOC 高频路径。
+
+## 13. Terminal 使用方法
 
 ### 启动
 
@@ -520,11 +570,11 @@ engine_stop
 engine_status
 ```
 
-`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、load_delta、compression_ms、stall_ms、obs_stable_ms、last_stop_reason、stability_score、learning_state、learning_window_count 和 consecutive_success，便于实车判断卡在哪个阶段以及学习是否已锁定。
+`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、load_delta、compression_ms、stall_ms、obs_stable_ms、last_stop_reason、stability_score、learning_state、learning_window_count、consecutive_success、strategy、knowledge_count 和 avg_start_time_ms，便于实车判断卡在哪个阶段、学习是否已锁定以及当前策略/知识库是否生效。
 
 Terminal 命令当前只做 start/stop/status，不负责改参数。调参数优先使用 Lisp。
 
-## 13. Lisp 使用方法
+## 14. Lisp 使用方法
 
 根目录提供了完整测试脚本：
 
@@ -600,7 +650,7 @@ ENGINE_START_TEST.lisp
 
 但建议优先使用符号名，避免 ID 顺序记错。
 
-## 14. 实车调参建议
+## 15. 实车调参建议
 
 ### 优先级 1：是否能拉动和冲过压缩点
 
@@ -651,7 +701,7 @@ ENGINE_START_TEST.lisp
 - 接管抖动，提高 `obs-min-erpm` 或 `blend-time-ms`。
 - 接管太晚，降低 `obs-min-erpm`。
 
-## 15. 后续修改注意事项
+## 16. 后续修改注意事项
 
 ### 不建议修改的内容
 
@@ -685,7 +735,7 @@ ENGINE_START_TEST.lisp
 
 当前设计是：Engine Start 未 active 时，状态机立即 return，不影响普通控制。
 
-## 16. 已验证命令
+## 17. 已验证命令
 
 当前已用推荐 ARM GCC 7-2018-q2 工具链通过以下命令验证：
 

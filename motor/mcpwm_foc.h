@@ -102,6 +102,9 @@ typedef struct {
 	int learning_state;
 	int learning_window_count;
 	int consecutive_success;
+	int strategy;
+	int knowledge_count;
+	float avg_start_time_ms;
 } engine_start_status_t;
 
 // Functions
