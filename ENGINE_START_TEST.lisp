@@ -92,11 +92,12 @@
         (engine-param-set 'pull-current 8.0)
         (engine-param-set 'accel-current 10.0)
 
-        ; No-load speeds for 21 pole pairs. Higher than the first smoke test to smooth PULL->ACCEL handoff.
-        ; 120 eRPM ~= 5.7 mechanical rpm, 800 eRPM ~= 38.1 mechanical rpm.
-        (engine-param-set 'pull-start-erpm 120.0)
-        (engine-param-set 'pull-target-erpm 800.0)
-        (engine-param-set 'pull-ramp-erpm-s 800.0)
+        ; No-load speeds for 21 pole pairs. 85 KV * 25 V is about 44k eRPM no-load,
+        ; so these bench values are still conservative but high enough for smoother handoff.
+        ; 500 eRPM ~= 23.8 mechanical rpm, 3000 eRPM ~= 142.9 mechanical rpm.
+        (engine-param-set 'pull-start-erpm 500.0)
+        (engine-param-set 'pull-target-erpm 3000.0)
+        (engine-param-set 'pull-ramp-erpm-s 3000.0)
 
         ; Mechanical-period adaptive timing. With 33 ms, pulse/gap/prewarn are auto-derived
         ; as about 40 ms / 17 ms / 27 ms. Do not set pulse/gap/prewarn manually
@@ -112,14 +113,14 @@
         (engine-param-set 'boost-current-2 12.0)
         (engine-param-set 'boost-current-3 15.0)
         (engine-param-set 'boost-max-pulses 1.0)
-        (engine-param-set 'boost-success-erpm 800.0)
+        (engine-param-set 'boost-success-erpm 3000.0)
 
-        ; No-load accel target for smoother transition validation.
-        (engine-param-set 'accel-target-erpm 1800.0)
-        (engine-param-set 'accel-ramp-erpm-s 1500.0)
+        ; No-load accel target for smoother transition validation. Still far below ~44k eRPM no-load.
+        (engine-param-set 'accel-target-erpm 8000.0)
+        (engine-param-set 'accel-ramp-erpm-s 6000.0)
 
         ; Delay observer handoff until a higher no-load speed and blend more gently.
-        (engine-param-set 'obs-min-erpm 1200.0)
+        (engine-param-set 'obs-min-erpm 5000.0)
         (engine-param-set 'obs-stable-time-ms 200.0)
         (engine-param-set 'blend-time-ms 400.0)
 
@@ -131,7 +132,7 @@
         (engine-param-set 'stall-confirm-ms 120.0)
 
         ; Global limits.
-        (engine-param-set 'max-start-time-ms 3000.0)
+        (engine-param-set 'max-start-time-ms 5000.0)
         (engine-param-set 'max-total-pulses 2.0)
         (engine-param-set 'max-retry 0.0)
 
@@ -153,8 +154,8 @@
         (print "=== START ===")
         (engine-start)
 
-        ; 40 samples * 0.1 s = 4 s. max-start-time-ms is 3 s, so this captures timeout/final state.
-        (engine-monitor 40)
+        ; 60 samples * 0.1 s = 6 s. max-start-time-ms is 5 s, so this captures timeout/final state.
+        (engine-monitor 60)
 
         ; Always reset Engine Start after the scripted test window, even if it ended in FAULT.
         ; This releases the Engine Start FAULT state so normal VESC current/duty controls work again.

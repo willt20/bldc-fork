@@ -712,7 +712,7 @@ Terminal 命令当前只做 start/stop/status，不负责改参数。调参数�
 ENGINE_START_TEST.lisp
 ```
 
-该脚本当前是空载低电流调试版本，会显式写入 A40 / 29.5V / 21 对极的保守 bench 参数：`align-current=5A`、`pull-current=8A`、`boost-current-1/2/3=10/12/15A`、`accel-current=10A`。为了让空载 PULL→ACCEL→BLEND 衔接更平滑，脚本把 `pull-target-erpm` 提高到 `800`、`accel-target-erpm` 提高到 `1800`、`obs-min-erpm` 提高到 `1200`，并使用 `blend-time-ms=400`。脚本会启动 Engine Start，并以 0.1s 间隔打印 `(engine-status)`，用于空载方向确认、状态链路验证和 timing/status 记录；监控窗口结束后会无条件执行 `(engine-stop)`，清除 Engine Start FAULT/active 状态，避免影响后续普通电流/占空比控制。接发动机前必须重新按实车负载逐步提高电流。
+该脚本当前是空载低电流调试版本，会显式写入 A40 / 29.5V / 21 对极的保守 bench 参数：`align-current=5A`、`pull-current=8A`、`boost-current-1/2/3=10/12/15A`、`accel-current=10A`。按 85KV、25V、21 极对数估算空载约 `44000 eRPM`，为了让空载 PULL→ACCEL→BLEND 衔接更平滑，脚本把 `pull-start-erpm` 提高到 `500`、`pull-target-erpm` 提高到 `3000`、`accel-target-erpm` 提高到 `8000`、`obs-min-erpm` 提高到 `5000`，并使用 `blend-time-ms=400`。脚本会启动 Engine Start，并以 0.1s 间隔打印 `(engine-status)`，用于空载方向确认、状态链路验证和 timing/status 记录；监控窗口为 6s，`max-start-time-ms=5000`；结束后会无条件执行 `(engine-stop)`，清除 Engine Start FAULT/active 状态，避免影响后续普通电流/占空比控制。接发动机前必须重新按实车负载逐步提高电流。
 
 ### 启动/停止
 
