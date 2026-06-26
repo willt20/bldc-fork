@@ -52,12 +52,22 @@
 #define ENGINE_PULL_TARGET_ERPM    800.0f
 #define ENGINE_PULL_RAMP_ERPM_S    800.0f
 #define ENGINE_BOOST_CURRENT       160.0f
-#define ENGINE_BOOST_TIME_MS       50
 #define ENGINE_BOOST_CURRENT_1     160.0f
 #define ENGINE_BOOST_CURRENT_2     190.0f
 #define ENGINE_BOOST_CURRENT_3     220.0f
-#define ENGINE_BOOST_PULSE_MS      50
-#define ENGINE_BOOST_GAP_MS        100
+#define ENGINE_PERIOD_MS           33.0f
+#define ENGINE_PULSE_RATIO         1.20f
+#define ENGINE_PREWARN_RATIO       0.82f
+#define ENGINE_GAP_RATIO           0.52f
+#define ENGINE_BOOST_PULSE_MIN_MS  20.0f
+#define ENGINE_BOOST_PULSE_MAX_MS  60.0f
+#define ENGINE_PREWARN_MIN_MS      15.0f
+#define ENGINE_PREWARN_MAX_MS      60.0f
+#define ENGINE_BOOST_GAP_MIN_MS    8.0f
+#define ENGINE_BOOST_GAP_MAX_MS    40.0f
+#define ENGINE_BOOST_PULSE_MS      (ENGINE_PERIOD_MS * ENGINE_PULSE_RATIO)
+#define ENGINE_BOOST_TIME_MS       ENGINE_BOOST_PULSE_MS
+#define ENGINE_BOOST_GAP_MS        (ENGINE_PERIOD_MS * ENGINE_GAP_RATIO)
 #define ENGINE_BOOST_MAX_PULSES    3
 #define ENGINE_BOOST_SUCCESS_ERPM  800.0f
 #define ENGINE_ACCEL_CURRENT       180.0f
@@ -90,7 +100,7 @@
 #define ENGINE_LOAD_FALL_SCORE     0.0f
 #define ENGINE_LOAD_DELTA_DEADBAND 5.0f
 #define ENGINE_LOAD_DELTA_MAX      60.0f
-#define ENGINE_LOAD_PREWARN_HOLD_MS 40
+#define ENGINE_LOAD_PREWARN_HOLD_MS (ENGINE_PERIOD_MS * ENGINE_PREWARN_RATIO)
 #define ENGINE_HIGH_LOAD_ENTER_MS  20
 #define ENGINE_HIGH_LOAD_EXIT_MS   50
 #define ENGINE_PULSE_MIN_MS        50
@@ -115,16 +125,16 @@
 #define ENGINE_ADAPTIVE_GAIN_MAX     1.0f
 #define ENGINE_ADAPTIVE_CURRENT_MIN  20.0f
 #define ENGINE_ADAPTIVE_CURRENT_MAX  250.0f
-#define ENGINE_ADAPTIVE_PULSE_MIN_MS 30.0f
-#define ENGINE_ADAPTIVE_PULSE_MAX_MS 100.0f
-#define ENGINE_ADAPTIVE_GAP_MIN_MS   60.0f
-#define ENGINE_ADAPTIVE_GAP_MAX_MS   200.0f
+#define ENGINE_ADAPTIVE_PULSE_MIN_MS ENGINE_BOOST_PULSE_MIN_MS
+#define ENGINE_ADAPTIVE_PULSE_MAX_MS ENGINE_BOOST_PULSE_MAX_MS
+#define ENGINE_ADAPTIVE_GAP_MIN_MS   ENGINE_BOOST_GAP_MIN_MS
+#define ENGINE_ADAPTIVE_GAP_MAX_MS   ENGINE_BOOST_GAP_MAX_MS
 #define ENGINE_ADAPTIVE_LOAD_HIGH_MIN 80.0f
 #define ENGINE_ADAPTIVE_LOAD_HIGH_MAX 200.0f
 #define ENGINE_ADAPTIVE_DEADBAND_MIN 1.0f
 #define ENGINE_ADAPTIVE_DEADBAND_MAX 20.0f
-#define ENGINE_ADAPTIVE_PREWARN_MIN_MS 30.0f
-#define ENGINE_ADAPTIVE_PREWARN_MAX_MS 80.0f
+#define ENGINE_ADAPTIVE_PREWARN_MIN_MS ENGINE_PREWARN_MIN_MS
+#define ENGINE_ADAPTIVE_PREWARN_MAX_MS ENGINE_PREWARN_MAX_MS
 #define ENGINE_STRATEGY_SWITCH_CONFIRM 5
 #define ENGINE_STRATEGY_COLD_RATE      0.20f
 #define ENGINE_STRATEGY_STABLE_RATE    0.80f
@@ -190,6 +200,7 @@ typedef struct {
 	float backoff_reverse_enable;
 	float backoff_current;
 	float backoff_erpm;
+	float engine_period_ms;
 } engine_start_params_t;
 
 typedef enum {
@@ -311,6 +322,9 @@ static float engine_start_learning_gain = ENGINE_ADAPTIVE_GAIN_MAX;
 static float engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
 static float engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
 static float engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
+static bool engine_start_manual_boost_pulse_ms = false;
+static bool engine_start_manual_boost_gap_ms = false;
+static bool engine_start_manual_prewarn_hold_ms = false;
 static engine_start_params_t engine_start_params = {
 	.align_current = ENGINE_ALIGN_CURRENT,
 	.align_time_ms = ENGINE_ALIGN_TIME_MS,
@@ -347,7 +361,8 @@ static engine_start_params_t engine_start_params = {
 	.backoff_ms = ENGINE_BACKOFF_MS,
 	.backoff_reverse_enable = ENGINE_BACKOFF_REVERSE_ENABLE,
 	.backoff_current = ENGINE_BACKOFF_CURRENT,
-	.backoff_erpm = ENGINE_BACKOFF_ERPM
+	.backoff_erpm = ENGINE_BACKOFF_ERPM,
+	.engine_period_ms = ENGINE_PERIOD_MS
 };
 #endif
 
@@ -1053,7 +1068,33 @@ static int engine_start_elapsed_ms(systime_t t) {
 	return ST2MS(chVTTimeElapsedSinceX(t));
 }
 
+static void engine_start_apply_period_timing(void) {
+	float boost_pulse_ms = engine_start_params.engine_period_ms * ENGINE_PULSE_RATIO;
+	float prewarn_hold_ms = engine_start_params.engine_period_ms * ENGINE_PREWARN_RATIO;
+	float boost_gap_ms = engine_start_params.engine_period_ms * ENGINE_GAP_RATIO;
+
+	utils_truncate_number(&boost_pulse_ms, ENGINE_BOOST_PULSE_MIN_MS, ENGINE_BOOST_PULSE_MAX_MS);
+	utils_truncate_number(&prewarn_hold_ms, ENGINE_PREWARN_MIN_MS, ENGINE_PREWARN_MAX_MS);
+	utils_truncate_number(&boost_gap_ms, ENGINE_BOOST_GAP_MIN_MS, ENGINE_BOOST_GAP_MAX_MS);
+
+	if (!engine_start_manual_boost_pulse_ms) {
+		engine_start_params.boost_time_ms = boost_pulse_ms;
+		engine_start_params.boost_pulse_ms = boost_pulse_ms;
+	}
+
+	if (!engine_start_manual_prewarn_hold_ms) {
+		engine_start_load_prewarn_hold_ms = prewarn_hold_ms;
+	}
+
+	if (!engine_start_manual_boost_gap_ms) {
+		engine_start_params.boost_gap_ms = boost_gap_ms;
+	}
+}
+
 static void engine_start_params_load_defaults(void) {
+	engine_start_manual_boost_pulse_ms = false;
+	engine_start_manual_boost_gap_ms = false;
+	engine_start_manual_prewarn_hold_ms = false;
 	engine_start_params.align_current = ENGINE_ALIGN_CURRENT;
 	engine_start_params.align_time_ms = ENGINE_ALIGN_TIME_MS;
 	engine_start_params.pull_current = ENGINE_PULL_CURRENT;
@@ -1090,9 +1131,11 @@ static void engine_start_params_load_defaults(void) {
 	engine_start_params.backoff_reverse_enable = ENGINE_BACKOFF_REVERSE_ENABLE;
 	engine_start_params.backoff_current = ENGINE_BACKOFF_CURRENT;
 	engine_start_params.backoff_erpm = ENGINE_BACKOFF_ERPM;
+	engine_start_params.engine_period_ms = ENGINE_PERIOD_MS;
 	engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
 	engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
 	engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
+	engine_start_apply_period_timing();
 }
 
 static float *engine_start_param_ptr(engine_start_param_id_t param) {
@@ -1133,6 +1176,8 @@ static float *engine_start_param_ptr(engine_start_param_id_t param) {
 	case ENGINE_START_PARAM_BACKOFF_REVERSE_ENABLE: return &engine_start_params.backoff_reverse_enable;
 	case ENGINE_START_PARAM_BACKOFF_CURRENT: return &engine_start_params.backoff_current;
 	case ENGINE_START_PARAM_BACKOFF_ERPM: return &engine_start_params.backoff_erpm;
+	case ENGINE_START_PARAM_ENGINE_PERIOD_MS: return &engine_start_params.engine_period_ms;
+	case ENGINE_START_PARAM_PREWARN_HOLD_MS: return &engine_start_load_prewarn_hold_ms;
 	default: return 0;
 	}
 }
@@ -1157,6 +1202,8 @@ static bool engine_start_param_valid(engine_start_param_id_t param, float value)
 	case ENGINE_START_PARAM_BOOST_TIME_MS:
 	case ENGINE_START_PARAM_BOOST_PULSE_MS:
 	case ENGINE_START_PARAM_BOOST_GAP_MS:
+	case ENGINE_START_PARAM_ENGINE_PERIOD_MS:
+	case ENGINE_START_PARAM_PREWARN_HOLD_MS:
 	case ENGINE_START_PARAM_BLEND_TIME_MS:
 	case ENGINE_START_PARAM_RETRY_DELAY_MS:
 	case ENGINE_START_PARAM_MAX_START_TIME_MS:
@@ -1187,7 +1234,17 @@ bool mcpwm_foc_engine_start_set_param(engine_start_param_id_t param, float value
 	if (param == ENGINE_START_PARAM_BOOST_CURRENT) {
 		engine_start_params.boost_current_1 = value;
 	} else if (param == ENGINE_START_PARAM_BOOST_TIME_MS) {
+		engine_start_manual_boost_pulse_ms = true;
 		engine_start_params.boost_pulse_ms = value;
+	} else if (param == ENGINE_START_PARAM_BOOST_PULSE_MS) {
+		engine_start_manual_boost_pulse_ms = true;
+		engine_start_params.boost_time_ms = value;
+	} else if (param == ENGINE_START_PARAM_BOOST_GAP_MS) {
+		engine_start_manual_boost_gap_ms = true;
+	} else if (param == ENGINE_START_PARAM_PREWARN_HOLD_MS) {
+		engine_start_manual_prewarn_hold_ms = true;
+	} else if (param == ENGINE_START_PARAM_ENGINE_PERIOD_MS) {
+		engine_start_apply_period_timing();
 	}
 	return true;
 }

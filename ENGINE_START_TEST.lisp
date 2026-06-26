@@ -4,7 +4,7 @@
 ; Safety:
 ; - Put the vehicle/engine in a safe state before running this script.
 ; - Keep a hard power cut-off ready.
-; - The default boost pulses are 160/190/220 A; reduce these first if MOS/battery margin is unknown.
+; - The test boost pulses below are 100/130/160 A; increase gradually only after logs are stable.
 ; - If state enters FAULT, run (engine-stop) before starting again.
 ;
 ; engine-status returns:
@@ -37,8 +37,10 @@
         (print "boost-current-1=" (engine-param-get 'boost-current-1))
         (print "boost-current-2=" (engine-param-get 'boost-current-2))
         (print "boost-current-3=" (engine-param-get 'boost-current-3))
+        (print "engine-period-ms=" (engine-param-get 'engine-period-ms))
         (print "boost-pulse-ms=" (engine-param-get 'boost-pulse-ms))
         (print "boost-gap-ms=" (engine-param-get 'boost-gap-ms))
+        (print "prewarn-hold-ms=" (engine-param-get 'prewarn-hold-ms))
         (print "boost-success-erpm=" (engine-param-get 'boost-success-erpm))
         (print "accel-current=" (engine-param-get 'accel-current))
         (print "accel-target-erpm=" (engine-param-get 'accel-target-erpm))
@@ -84,13 +86,15 @@
         (engine-param-set 'pull-target-erpm 800.0)
         (engine-param-set 'pull-ramp-erpm-s 800.0)
 
-        ; Pulsed boost: short 50 ms pulses with a 100 ms release gap.
-        ; Start lower than these values during first hardware shakedown if MOS/battery margin is unknown.
-        (engine-param-set 'boost-current-1 160.0)
-        (engine-param-set 'boost-current-2 190.0)
-        (engine-param-set 'boost-current-3 220.0)
-        (engine-param-set 'boost-pulse-ms 50.0)
-        (engine-param-set 'boost-gap-ms 100.0)
+        ; Mechanical-period adaptive timing. With 33 ms, pulse/gap/prewarn are auto-derived
+        ; as about 40 ms / 17 ms / 27 ms. Do not set pulse/gap/prewarn manually
+        ; unless you intentionally want to override the period-based timing.
+        (engine-param-set 'engine-period-ms 33.0)
+
+        ; Pulsed boost current ladder. Start lower than firmware maximum during first shakedown.
+        (engine-param-set 'boost-current-1 100.0)
+        (engine-param-set 'boost-current-2 130.0)
+        (engine-param-set 'boost-current-3 160.0)
         (engine-param-set 'boost-max-pulses 3.0)
         (engine-param-set 'boost-success-erpm 800.0)
 

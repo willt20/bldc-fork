@@ -145,10 +145,10 @@ pre-warning：load_score > (ENGINE_LOAD_HIGH_SCORE + ENGINE_LOAD_LOW_SCORE) / 2
 
 - 每次进入 PULSE 都增加 `boost_pulse_count` 和 `total_pulse_count`。
 - 第 1 / 2 / 3 个脉冲分别使用 `boost-current-1`、`boost-current-2`、`boost-current-3`。
-- 默认单个脉冲最大 `boost-pulse-ms = 50ms`。
-- `ENGINE_PULSE_MIN_MS = 50ms` 内禁止提前退出，保证最小能量窗口。
-- 50ms 后如果 rpm 不上升、load 不下降且电流仍高，则提前进入 `GAP`，避免硬顶压缩峰。
-- PULSE 以时间为主导逻辑：所有普通退出条件都必须等到 `ENGINE_PULSE_MIN_MS` 之后才允许执行。
+- 默认单个脉冲最大时间由机械周期计算：`boost-pulse-ms = engine-period-ms × 1.20`，33ms 周期下约 `40ms`。
+- `ENGINE_PULSE_MIN_MS = 50ms` 仍保留为失败提前退出的最小判定窗口；如果自动 `boost-pulse-ms` 小于该窗口，则 PULSE 主要按 `boost-pulse-ms` 时间结束。
+- 达到最小判定窗口后，如果 rpm 不上升、load 不下降且电流仍高，则提前进入 `GAP`，避免硬顶压缩峰。
+- PULSE 以时间为主导逻辑，推荐优先通过 `engine-period-ms` 改变节奏，而不是直接改 `boost-pulse-ms`。
 - 如果滤波 ERPM 超过 `boost-success-erpm`，也要在最小能量窗口之后才进入 `GAP`，由 GAP 决定是否转入 `ACCEL`。
 
 ### 4.6 GAP
@@ -349,7 +349,79 @@ abs(actual_erpm) >= obs-min-erpm
 - 不改 `mc_configuration`。
 - 不改 VESC Tool 参数协议。
 
-## 9. 当前参数表
+## 9. 机械周期自适应 timing
+
+最新实测电流波形显示，当前 A40 / 四缸曲轴直连启动存在明显周期性压缩负载，默认机械周期按：
+
+```text
+engine-period-ms = 33.0 ms
+```
+
+这一值是工程标定默认值。不同发动机可以优先通过 Lisp 修改：
+
+```lisp
+(engine-param-set 'engine-period-ms 31.0)
+(engine-param-set 'engine-period-ms 32.0)
+(engine-param-set 'engine-period-ms 33.0)
+(engine-param-set 'engine-period-ms 34.0)
+(engine-param-set 'engine-period-ms 35.0)
+```
+
+### 9.1 自动比例计算
+
+默认不再推荐直接调 `boost-pulse-ms`、`boost-gap-ms`、`prewarn-hold-ms`。固件会用 `engine-period-ms` 统一计算启动节奏：
+
+```text
+boost-pulse-ms  = engine-period-ms × pulse_ratio   = engine-period-ms × 1.20
+prewarn-hold-ms = engine-period-ms × prewarn_ratio = engine-period-ms × 0.82
+boost-gap-ms    = engine-period-ms × gap_ratio     = engine-period-ms × 0.52
+```
+
+默认 33ms 时：
+
+```text
+boost-pulse-ms  ≈ 39.6 ms，约 40 ms
+prewarn-hold-ms ≈ 27.1 ms，约 27 ms
+boost-gap-ms    ≈ 17.2 ms，约 17 ms
+```
+
+### 9.2 安全 clamp
+
+自动计算结果会做安全限幅：
+
+| 参数 | 自动计算限幅 |
+|---|---:|
+| `boost-pulse-ms` | `20 ~ 60 ms` |
+| `prewarn-hold-ms` | `15 ~ 60 ms` |
+| `boost-gap-ms` | `8 ~ 40 ms` |
+
+### 9.3 人工参数优先
+
+如果用户主动执行：
+
+```lisp
+(engine-param-set 'boost-pulse-ms ...)
+(engine-param-set 'boost-gap-ms ...)
+(engine-param-set 'prewarn-hold-ms ...)
+```
+
+则对应参数进入人工 override，该参数不再被 `engine-period-ms` 自动改写。未被人工 override 的其它 timing 参数仍会跟随 `engine-period-ms` 自动计算。
+
+调用：
+
+```lisp
+(engine-param-reset)
+```
+
+会清除这些人工 override 标志，并恢复周期自适应默认节奏。
+
+### 9.4 调试优先级
+
+- 卡压缩：优先把 `boost-current-1/2/3` 每档增加约 `20A`；其次把 `engine-period-ms` 增加 `1ms`，不要先直接改 `boost-pulse-ms`。
+- Kickback / 反冲：优先降低 `boost-current-3`；其次把 `engine-period-ms` 降低 `1ms`；如果仍存在，再考虑调整 gap ratio 对应的固件宏，不要先直接改 `boost-gap-ms`。
+- 启动成功但时间偏长：优先降低 gap ratio 对应的固件宏；其次降低 pulse ratio 对应的固件宏，不要继续增加 boost 电流。
+
+## 10. 当前参数表
 
 | Lisp 参数名 | C enum | 默认值 | 单位 | 说明 |
 |---|---|---:|---|---|
@@ -360,12 +432,12 @@ abs(actual_erpm) >= obs-min-erpm
 | `pull-target-erpm` | `ENGINE_START_PARAM_PULL_TARGET_ERPM` | `800.0` | eRPM | PULL 目标速度 |
 | `pull-ramp-erpm-s` | `ENGINE_START_PARAM_PULL_RAMP_ERPM_S` | `800.0` | eRPM/s | PULL 开环速度爬升率 |
 | `boost-current` | `ENGINE_START_PARAM_BOOST_CURRENT` | `160.0` | A | 兼容旧 Lisp 名称；设置时同步到第 1 个 PULSE 电流 |
-| `boost-time-ms` | `ENGINE_START_PARAM_BOOST_TIME_MS` | `50` | ms | 兼容旧 Lisp 名称；设置时同步到 PULSE 脉冲宽度 |
+| `boost-time-ms` | `ENGINE_START_PARAM_BOOST_TIME_MS` | `≈39.6` | ms | 兼容旧 Lisp 名称；人工设置时同步到 `boost-pulse-ms` 并覆盖周期自适应 |
 | `boost-current-1` | `ENGINE_START_PARAM_BOOST_CURRENT_1` | `160.0` | A | 第 1 个 PULSE 脉冲电流 |
 | `boost-current-2` | `ENGINE_START_PARAM_BOOST_CURRENT_2` | `190.0` | A | 第 2 个 PULSE 脉冲电流 |
 | `boost-current-3` | `ENGINE_START_PARAM_BOOST_CURRENT_3` | `220.0` | A | 第 3 个 PULSE 脉冲电流；实车必须从低值验证 |
-| `boost-pulse-ms` | `ENGINE_START_PARAM_BOOST_PULSE_MS` | `50` | ms | 单个 PULSE 最大脉冲宽度；内部还有 `ENGINE_PULSE_MIN_MS` 最小能量窗口 |
-| `boost-gap-ms` | `ENGINE_START_PARAM_BOOST_GAP_MS` | `100` | ms | PULSE 之间的 0A 释放间隔 |
+| `boost-pulse-ms` | `ENGINE_START_PARAM_BOOST_PULSE_MS` | `≈39.6` | ms | 单个 PULSE 最大脉冲宽度；默认由 `engine-period-ms × 1.20` 自动计算，人工设置后优先 |
+| `boost-gap-ms` | `ENGINE_START_PARAM_BOOST_GAP_MS` | `≈17.2` | ms | PULSE 之间的 0A 释放间隔；默认由 `engine-period-ms × 0.52` 自动计算，人工设置后优先 |
 | `boost-max-pulses` | `ENGINE_START_PARAM_BOOST_MAX_PULSES` | `3` | 次 | 单轮压缩点最多 PULSE 次数 |
 | `boost-success-erpm` | `ENGINE_START_PARAM_BOOST_SUCCESS_ERPM` | `800.0` | eRPM | PULSE/GAP 后允许进入 ACCEL 的最低速度 |
 | `accel-current` | `ENGINE_START_PARAM_ACCEL_CURRENT` | `180.0` | A | ACCEL 加速电流 |
@@ -389,8 +461,10 @@ abs(actual_erpm) >= obs-min-erpm
 | `backoff-reverse-enable` | `ENGINE_START_PARAM_BACKOFF_REVERSE_ENABLE` | `0` | bool | 是否启用小电流反向卸力；默认关闭 |
 | `backoff-current` | `ENGINE_START_PARAM_BACKOFF_CURRENT` | `-40.0` | A | 反向卸力电流，仅启用 backoff reverse 时使用 |
 | `backoff-erpm` | `ENGINE_START_PARAM_BACKOFF_ERPM` | `-100.0` | eRPM | 反向卸力速度，仅启用 backoff reverse 时使用 |
+| `engine-period-ms` | `ENGINE_START_PARAM_ENGINE_PERIOD_MS` | `33.0` | ms | 机械压缩周期参考值；默认用于自动计算 pulse / gap / prewarn timing |
+| `prewarn-hold-ms` | `ENGINE_START_PARAM_PREWARN_HOLD_MS` | `≈27.1` | ms | pre-warning 保持时间；默认由 `engine-period-ms × 0.82` 自动计算，人工设置后优先 |
 
-### 9.1 内部稳定性宏参数
+### 10.1 内部稳定性宏参数
 
 以下参数不是 Lisp 运行时参数，主要用于状态机稳定性和保护。修改它们需要重新编译固件。
 
@@ -406,7 +480,11 @@ abs(actual_erpm) >= obs-min-erpm
 | `ENGINE_LOAD_FALL_SCORE` | `0.0` | score/update | HIGH_LOAD 退出/LOW_LOAD 时的 load_delta 阈值 |
 | `ENGINE_LOAD_DELTA_DEADBAND` | `5.0` | score/update | load_delta 死区，小于该值的噪声尖峰归零 |
 | `ENGINE_LOAD_DELTA_MAX` | `60.0` | score/update | load_delta 限幅，防止高频尖峰直接抢占 HIGH_LOAD |
-| `ENGINE_LOAD_PREWARN_HOLD_MS` | `40` | ms | pre-warning 保持时间；只短时抑制 LOW_LOAD，避免长期拖慢 ACCEL |
+| `ENGINE_PERIOD_MS` | `33.0` | ms | 机械周期默认标定值，运行时可用 `engine-period-ms` 覆盖 |
+| `ENGINE_PULSE_RATIO` | `1.20` | ratio | `boost-pulse-ms = engine-period-ms × 1.20` |
+| `ENGINE_PREWARN_RATIO` | `0.82` | ratio | `prewarn-hold-ms = engine-period-ms × 0.82` |
+| `ENGINE_GAP_RATIO` | `0.52` | ratio | `boost-gap-ms = engine-period-ms × 0.52` |
+| `ENGINE_LOAD_PREWARN_HOLD_MS` | `≈27.1` | ms | pre-warning 默认保持时间；由机械周期计算，只短时抑制 LOW_LOAD |
 | `ENGINE_HIGH_LOAD_ENTER_MS` | `20` | ms | HIGH_LOAD 进入确认时间 |
 | `ENGINE_HIGH_LOAD_EXIT_MS` | `50` | ms | HIGH_LOAD 退出确认时间 |
 | `ENGINE_PULSE_MIN_MS` | `50` | ms | PULSE 最小能量窗口；小于该时间禁止提前退出 |
@@ -415,7 +493,7 @@ abs(actual_erpm) >= obs-min-erpm
 | `ENGINE_OVERCURRENT_CURRENT` | `260.0` | A | Engine Start 过流停止阈值 |
 | `ENGINE_RECOVER_MS` | `150` | ms | RECOVER 基础等待时间；实际还受 200ms hold 限制 |
 
-## 10. 参数合法性检查
+## 11. 参数合法性检查
 
 `mcpwm_foc_engine_start_set_param()` 会做基础检查：
 
@@ -425,9 +503,10 @@ abs(actual_erpm) >= obs-min-erpm
 - `direction` 的绝对值必须在 `0.5 ~ 1.0`，实际使用时会归一为正向或反向。
 - `backoff-reverse-enable` 必须在 `0.0 ~ 1.0`。
 - 时间类参数必须大于 0，避免除零或无意义状态。
+- `engine-period-ms` 必须大于 0；推荐按实测机械周期使用 `31 ~ 35ms`。
 - 其他参数必须大于等于 0。
 
-## 11. V3/V4 自适应标定与稳定锁定
+## 12. V3/V4 自适应标定与稳定锁定
 
 V3/V4 只做统计、微调和锁定标志，不新增状态机状态，不改 PULSE/GAP/BACKOFF/RECOVER 结构，不改 FOC/PWM/ADC/Observer。所有计算都是固定长度窗口和常数次算术，实时开销为 O(1)。
 
@@ -600,16 +679,16 @@ ENGINE_START_TEST.lisp
 (engine-param-get 'boost-current)
 (engine-param-get 'pull-current)
 (engine-param-get 'stall-duty)
+(engine-param-get 'engine-period-ms)
 ```
 
 ### 修改参数
 
 ```lisp
-(engine-param-set 'boost-current-1 120.0)
-(engine-param-set 'boost-current-2 150.0)
-(engine-param-set 'boost-current-3 180.0)
-(engine-param-set 'boost-pulse-ms 50)
-(engine-param-set 'boost-gap-ms 100)
+(engine-param-set 'engine-period-ms 33.0)
+(engine-param-set 'boost-current-1 100.0)
+(engine-param-set 'boost-current-2 130.0)
+(engine-param-set 'boost-current-3 160.0)
 (engine-param-set 'pull-current 110.0)
 (engine-param-set 'stall-duty 0.10)
 (engine-param-set 'direction 1.0) ; 如电机方向相反可改为 -1.0
@@ -629,11 +708,10 @@ ENGINE_START_TEST.lisp
 
 ; 温和一点的首轮参数
 (engine-param-set 'pull-current 100.0)
-(engine-param-set 'boost-current-1 120.0)
-(engine-param-set 'boost-current-2 150.0)
-(engine-param-set 'boost-current-3 180.0)
-(engine-param-set 'boost-pulse-ms 50)
-(engine-param-set 'boost-gap-ms 100)
+(engine-param-set 'engine-period-ms 33.0)
+(engine-param-set 'boost-current-1 100.0)
+(engine-param-set 'boost-current-2 130.0)
+(engine-param-set 'boost-current-3 160.0)
 (engine-param-set 'accel-current 150.0)
 (engine-param-set 'stall-duty 0.10)
 (engine-param-set 'direction 1.0) ; 如电机方向相反可改为 -1.0
@@ -651,7 +729,7 @@ ENGINE_START_TEST.lisp
 
 但建议优先使用符号名，避免 ID 顺序记错。
 
-## 15. 实车调参建议
+## 16. 实车调参建议
 
 ### 优先级 1：是否能拉动和冲过压缩点
 
@@ -661,8 +739,7 @@ ENGINE_START_TEST.lisp
 - `boost-current-1`
 - `boost-current-2`
 - `boost-current-3`
-- `boost-pulse-ms`
-- `boost-gap-ms`
+- `engine-period-ms`
 - `stall-erpm`
 - `stall-current`
 - `stall-duty`
@@ -671,8 +748,8 @@ ENGINE_START_TEST.lisp
 建议：
 
 - 如果慢拉拉不动，提高 `pull-current`。
-- 如果遇到压缩点但冲不过，逐步提高 `boost-current-1/2/3` 或 `boost-pulse-ms`，不要直接上 250A。
-- 如果 PULSE 连续撞击太硬，适当增大 `boost-gap-ms`。
+- 如果遇到压缩点但冲不过，优先把 `boost-current-1/2/3` 每档增加约 `20A`；其次把 `engine-period-ms` 增加 `1ms`，不要先直接改 `boost-pulse-ms`。
+- 如果 Kickback / 反冲，优先降低 `boost-current-3`；其次把 `engine-period-ms` 降低 `1ms`，不要先直接改 `boost-gap-ms`。
 - 如果误判压缩点，提高 `stall-current`、`stall-duty` 或 `compression-time-ms`。
 - 如果明显卡住但不进 PULSE，降低 `stall-current`、`stall-duty` 或缩短 `compression-time-ms`，同时检查 `load_score/load_delta` 是否达到 HIGH_LOAD。
 
@@ -702,7 +779,7 @@ ENGINE_START_TEST.lisp
 - 接管抖动，提高 `obs-min-erpm` 或 `blend-time-ms`。
 - 接管太晚，降低 `obs-min-erpm`。
 
-## 16. 后续修改注意事项
+## 17. 后续修改注意事项
 
 ### 不建议修改的内容
 

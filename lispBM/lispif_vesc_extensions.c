@@ -1915,7 +1915,9 @@ static char *engine_start_param_names[ENGINE_START_PARAM_NUM] = {
 	"backoff-ms",
 	"backoff-reverse-enable",
 	"backoff-current",
-	"backoff-erpm"
+	"backoff-erpm",
+	"engine-period-ms",
+	"prewarn-hold-ms"
 };
 static lbm_uint engine_start_param_syms[ENGINE_START_PARAM_NUM];
 
