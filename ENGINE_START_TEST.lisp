@@ -156,14 +156,10 @@
         ; 40 samples * 0.1 s = 4 s. max-start-time-ms is 3 s, so this captures timeout/final state.
         (engine-monitor 40)
 
-        ; Ensure output is stopped after the scripted test window.
-        (if (engine-start-active)
-            {
-                (print "engine still active after monitor window, stopping")
-                (engine-stop)
-            }
-            ()
-        )
+        ; Always reset Engine Start after the scripted test window, even if it ended in FAULT.
+        ; This releases the Engine Start FAULT state so normal VESC current/duty controls work again.
+        (print "resetting engine-start state after monitor window")
+        (engine-stop)
         (print "after-stop-status=" (engine-status))
     }
 )

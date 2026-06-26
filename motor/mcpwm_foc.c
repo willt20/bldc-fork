@@ -1909,7 +1909,7 @@ static bool engine_start_v6_preload_knowledge(void) {
 }
 
 static void engine_start_update(float dt) {
-	if (!engine_start_active && engine_start_state != ENGINE_START_FAULT) {
+	if (!engine_start_active) {
 		return;
 	}
 

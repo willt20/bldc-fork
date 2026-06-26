@@ -712,7 +712,7 @@ Terminal 命令当前只做 start/stop/status，不负责改参数。调参数�
 ENGINE_START_TEST.lisp
 ```
 
-该脚本当前是空载低电流调试版本，会显式写入 A40 / 29.5V / 21 对极的保守 bench 参数：`align-current=5A`、`pull-current=8A`、`boost-current-1/2/3=10/12/15A`、`accel-current=10A`。脚本会启动 Engine Start，并以 0.1s 间隔打印 `(engine-status)`，用于空载方向确认、状态链路验证和 timing/status 记录。接发动机前必须重新按实车负载逐步提高电流。
+该脚本当前是空载低电流调试版本，会显式写入 A40 / 29.5V / 21 对极的保守 bench 参数：`align-current=5A`、`pull-current=8A`、`boost-current-1/2/3=10/12/15A`、`accel-current=10A`。脚本会启动 Engine Start，并以 0.1s 间隔打印 `(engine-status)`，用于空载方向确认、状态链路验证和 timing/status 记录；监控窗口结束后会无条件执行 `(engine-stop)`，清除 Engine Start FAULT/active 状态，避免影响后续普通电流/占空比控制。接发动机前必须重新按实车负载逐步提高电流。
 
 ### 启动/停止
 
