@@ -700,7 +700,7 @@ engine_stop
 engine_status
 ```
 
-`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、filtered load_delta、compression_ms、stall_ms、obs_stable_ms、last_stop_reason、stability_score、learning_state、learning_window_count、consecutive_success、strategy、knowledge_count、avg_start_time_ms、v6_confidence、learning_gain 和 policy_mode，便于实车判断卡在哪个阶段、学习是否已锁定、V6 是否主导、V3 是否仍在学习以及当前是 V5_ONLY/V6_ONLY/HYBRID_LOCKED 仲裁模式。
+`engine_status` 会输出 active、state、retry_count、boost_pulse_count、total_pulse_count、openloop_erpm、openloop_phase、blend、iq_target、滤波后的 erpm/current/duty、accel、load_score、filtered load_delta、compression_ms、stall_ms、obs_stable_ms、last_stop_reason、stability_score、learning_state、learning_window_count、consecutive_success、strategy、knowledge_count、avg_start_time_ms、v6_confidence、policy_mode、timing_mode 和 timing_clamp_status，便于实车判断卡在哪个阶段、学习是否已锁定、V6 是否主导、当前是 V5_ONLY/V6_ONLY/HYBRID_LOCKED 仲裁模式，以及 Timing 是否处于 AUTO/MANUAL 或发生 clamp。
 
 Terminal 命令当前只做 start/stop/status，不负责改参数。调参数优先使用 Lisp。
 
@@ -712,7 +712,7 @@ Terminal 命令当前只做 start/stop/status，不负责改参数。调参数�
 ENGINE_START_TEST.lisp
 ```
 
-该脚本会显式写入 A40 / 29.5V / 21 对极的建议初始值，启动 Engine Start，并以 0.1s 间隔打印 `(engine-status)`，用于记录 `state`、脉冲计数、滤波转速/电流/duty、`load-score`、`load-delta`、compression/stall/observer 稳定时间和停止原因。
+该脚本当前是空载低电流调试版本，会显式写入 A40 / 29.5V / 21 对极的保守 bench 参数：`align-current=5A`、`pull-current=8A`、`boost-current-1/2/3=10/12/15A`、`accel-current=10A`。脚本会启动 Engine Start，并以 0.1s 间隔打印 `(engine-status)`，用于空载方向确认、状态链路验证和 timing/status 记录。接发动机前必须重新按实车负载逐步提高电流。
 
 ### 启动/停止
 

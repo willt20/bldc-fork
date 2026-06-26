@@ -1,10 +1,12 @@
-; Engine Start Mode full Lisp bench/vehicle test script.
+; Engine Start Mode no-load low-current Lisp debug script.
 ; Target hardware used for defaults: KV ~= 65 rpm/V, Vin ~= 29.5 V, 42 poles / 21 pole pairs.
+; Use this version for bench/no-load direction and status validation before connecting the engine.
 ;
 ; Safety:
 ; - Put the vehicle/engine in a safe state before running this script.
 ; - Keep a hard power cut-off ready.
-; - The test boost pulses below are 100/130/160 A; increase gradually only after logs are stable.
+; - This no-load script uses very low currents: align 5 A, pull 8 A, boost 10/12/15 A, accel 10 A.
+; - Do not use these currents as final engine-cranking values; increase gradually only after logs are stable.
 ; - If state enters FAULT, run (engine-stop) before starting again.
 ;
 ; engine-status returns:
@@ -73,9 +75,9 @@
     )
 )
 
-(defun engine-apply-a40-29v5-defaults ()
+(defun engine-apply-noload-low-current-defaults ()
     {
-        ; Start from firmware defaults, then write the recommended test values explicitly
+        ; Start from firmware defaults, then write conservative no-load test values explicitly
         ; so this script is self-documenting and repeatable even if firmware defaults change later.
         (engine-param-reset)
 
@@ -85,11 +87,16 @@
         ; 29.5 V system: stop Engine Start if bus sags too far.
         (engine-param-set 'min-vin 24.0)
 
-        ; Slow pull / compression detection speeds for 21 pole pairs.
-        ; 100 eRPM ~= 4.8 mechanical rpm, 800 eRPM ~= 38.1 mechanical rpm.
-        (engine-param-set 'pull-start-erpm 100.0)
-        (engine-param-set 'pull-target-erpm 800.0)
-        (engine-param-set 'pull-ramp-erpm-s 800.0)
+        ; No-load current limits. Keep these low for first bench validation.
+        (engine-param-set 'align-current 5.0)
+        (engine-param-set 'pull-current 8.0)
+        (engine-param-set 'accel-current 10.0)
+
+        ; Slow no-load speeds for 21 pole pairs.
+        ; 80 eRPM ~= 3.8 mechanical rpm, 500 eRPM ~= 23.8 mechanical rpm.
+        (engine-param-set 'pull-start-erpm 80.0)
+        (engine-param-set 'pull-target-erpm 500.0)
+        (engine-param-set 'pull-ramp-erpm-s 500.0)
 
         ; Mechanical-period adaptive timing. With 33 ms, pulse/gap/prewarn are auto-derived
         ; as about 40 ms / 17 ms / 27 ms. Do not set pulse/gap/prewarn manually
@@ -100,33 +107,33 @@
         (engine-param-set 'prewarn-ratio 0.82)
         (engine-param-set 'gap-ratio 0.52)
 
-        ; Pulsed boost current ladder. Start lower than firmware maximum during first shakedown.
-        (engine-param-set 'boost-current-1 100.0)
-        (engine-param-set 'boost-current-2 130.0)
-        (engine-param-set 'boost-current-3 160.0)
-        (engine-param-set 'boost-max-pulses 3.0)
-        (engine-param-set 'boost-success-erpm 800.0)
+        ; Very low no-load pulsed boost ladder. If PULSE is entered unexpectedly, keep it safe.
+        (engine-param-set 'boost-current-1 10.0)
+        (engine-param-set 'boost-current-2 12.0)
+        (engine-param-set 'boost-current-3 15.0)
+        (engine-param-set 'boost-max-pulses 1.0)
+        (engine-param-set 'boost-success-erpm 500.0)
 
-        ; Accel target for 21 pole pairs: 3000 eRPM ~= 143 mechanical rpm.
-        (engine-param-set 'accel-target-erpm 3000.0)
-        (engine-param-set 'accel-ramp-erpm-s 1800.0)
+        ; No-load accel target for status/direction validation.
+        (engine-param-set 'accel-target-erpm 1000.0)
+        (engine-param-set 'accel-ramp-erpm-s 800.0)
 
-        ; Delay observer handoff: 2500 eRPM ~= 119 mechanical rpm.
-        (engine-param-set 'obs-min-erpm 2500.0)
+        ; Lower observer handoff target for no-load bench validation.
+        (engine-param-set 'obs-min-erpm 800.0)
         (engine-param-set 'obs-stable-time-ms 200.0)
         (engine-param-set 'blend-time-ms 300.0)
 
-        ; Compression/stall detection.
-        (engine-param-set 'stall-erpm 300.0)
-        (engine-param-set 'stall-current 100.0)
+        ; Compression/stall detection. No-load should not reach these often.
+        (engine-param-set 'stall-erpm 200.0)
+        (engine-param-set 'stall-current 20.0)
         (engine-param-set 'stall-duty 0.12)
         (engine-param-set 'compression-time-ms 50.0)
         (engine-param-set 'stall-confirm-ms 120.0)
 
         ; Global limits.
-        (engine-param-set 'max-start-time-ms 5000.0)
-        (engine-param-set 'max-total-pulses 9.0)
-        (engine-param-set 'max-retry 3.0)
+        (engine-param-set 'max-start-time-ms 3000.0)
+        (engine-param-set 'max-total-pulses 2.0)
+        (engine-param-set 'max-retry 0.0)
 
         ; Default backoff only unloads. Do not enable reverse until mechanically validated.
         (engine-param-set 'backoff-ms 200.0)
@@ -138,16 +145,16 @@
 
 (defun engine-test-run ()
     {
-        (print "=== Engine Start A40 29.5V / 21-pole-pair Test ===")
+        (print "=== Engine Start No-Load Low-Current Debug Test ===")
         (engine-stop)
-        (engine-apply-a40-29v5-defaults)
+        (engine-apply-noload-low-current-defaults)
         (engine-print-params)
         (print "initial-status=" (engine-status))
         (print "=== START ===")
         (engine-start)
 
-        ; 60 samples * 0.1 s = 6 s. max-start-time-ms is 5 s, so this captures timeout/final state.
-        (engine-monitor 60)
+        ; 40 samples * 0.1 s = 4 s. max-start-time-ms is 3 s, so this captures timeout/final state.
+        (engine-monitor 40)
 
         ; Ensure output is stopped after the scripted test window.
         (if (engine-start-active)
