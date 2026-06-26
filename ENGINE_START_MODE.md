@@ -437,7 +437,7 @@ ratio 修改后也会通过 `engine_start_update_timing()` 重新计算未被人
 | `1` | `boost-gap-ms` 为 MANUAL，否则 AUTO |
 | `2` | `prewarn-hold-ms` 为 MANUAL，否则 AUTO |
 
-Timing Clamp Status 也使用 bitmask，只读、不可写，用于观察 `engine_period_ms × ratio` 后是否被安全限幅截断：
+Timing Clamp Status 也使用 bitmask，只读、不可写，用于观察 `engine_period_ms × ratio` 的 raw timing 是否被最终 clamp 输出改变：
 
 | bit | 含义 |
 |---:|---|
@@ -454,10 +454,10 @@ ES timing clamp : pulse NORMAL, gap NORMAL, prewarn CLAMPED
 
 ### 9.6 Clamp 观测用途
 
-Timing clamp 只记录状态，不改变任何 timing 计算结果和控制输出。它用于实车标定时判断 ratio 是否已经触及安全边界：
+Timing clamp 只记录状态，不改变任何 timing 计算结果和控制输出。它以 `utils_truncate_number()` 之后的最终输出为准：如果最终 timing 与 raw timing 不同，则记录为 `CLAMPED`。它用于实车标定时判断 ratio 是否已经触及安全边界：
 
-- `NORMAL`：ratio 计算值在允许范围内。
-- `CLAMPED`：ratio 计算值超出安全范围，实际 timing 已被限制到 min/max。
+- `NORMAL`：最终 timing 与 raw timing 相同。
+- `CLAMPED`：最终 timing 已被限制到 min/max。
 
 如果发现持续 `CLAMPED`，说明继续调整 ratio 已经不会线性改变实际 timing，应优先重新评估 `engine-period-ms` 或 ratio 标定范围。
 

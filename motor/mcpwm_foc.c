@@ -1083,21 +1083,24 @@ static void engine_start_update_timing(void) {
 	float boost_pulse_ms = engine_start_params.engine_period_ms * engine_start_params.pulse_ratio;
 	float prewarn_hold_ms = engine_start_params.engine_period_ms * engine_start_params.prewarn_ratio;
 	float boost_gap_ms = engine_start_params.engine_period_ms * engine_start_params.gap_ratio;
-
-	engine_start_timing_clamp_status = 0;
-	if (boost_pulse_ms < ENGINE_BOOST_PULSE_MIN_MS || boost_pulse_ms > ENGINE_BOOST_PULSE_MAX_MS) {
-		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_PULSE;
-	}
-	if (prewarn_hold_ms < ENGINE_PREWARN_MIN_MS || prewarn_hold_ms > ENGINE_PREWARN_MAX_MS) {
-		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_PREWARN;
-	}
-	if (boost_gap_ms < ENGINE_BOOST_GAP_MIN_MS || boost_gap_ms > ENGINE_BOOST_GAP_MAX_MS) {
-		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_GAP;
-	}
+	float boost_pulse_raw_ms = boost_pulse_ms;
+	float prewarn_raw_ms = prewarn_hold_ms;
+	float boost_gap_raw_ms = boost_gap_ms;
 
 	utils_truncate_number(&boost_pulse_ms, ENGINE_BOOST_PULSE_MIN_MS, ENGINE_BOOST_PULSE_MAX_MS);
 	utils_truncate_number(&prewarn_hold_ms, ENGINE_PREWARN_MIN_MS, ENGINE_PREWARN_MAX_MS);
 	utils_truncate_number(&boost_gap_ms, ENGINE_BOOST_GAP_MIN_MS, ENGINE_BOOST_GAP_MAX_MS);
+
+	engine_start_timing_clamp_status = 0;
+	if (boost_pulse_ms != boost_pulse_raw_ms) {
+		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_PULSE;
+	}
+	if (prewarn_hold_ms != prewarn_raw_ms) {
+		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_PREWARN;
+	}
+	if (boost_gap_ms != boost_gap_raw_ms) {
+		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_GAP;
+	}
 
 	if (!engine_start_manual_boost_pulse_ms) {
 		engine_start_params.boost_time_ms = boost_pulse_ms;
