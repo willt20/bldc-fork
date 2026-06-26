@@ -100,6 +100,7 @@
 #define ENGINE_LOAD_FALL_SCORE     0.0f
 #define ENGINE_LOAD_DELTA_DEADBAND 5.0f
 #define ENGINE_LOAD_DELTA_MAX      60.0f
+#define ENGINE_ERPM_REACHED_MARGIN 1.0f
 #define ENGINE_LOAD_PREWARN_HOLD_MS (ENGINE_PERIOD_MS * ENGINE_PREWARN_RATIO)
 #define ENGINE_HIGH_LOAD_ENTER_MS  20
 #define ENGINE_HIGH_LOAD_EXIT_MS   50
@@ -393,6 +394,7 @@ static bool engine_start_detect_compression(void);
 static bool engine_start_detect_stall(void);
 static bool engine_start_high_load(void);
 static bool engine_start_low_load(void);
+static bool engine_start_erpm_reached(float target_erpm);
 static bool engine_start_observer_stable(void);
 static void engine_start_update_filters(float dt);
 static void engine_start_update_high_load_latch(float dt, bool compression);
@@ -1547,6 +1549,10 @@ static bool engine_start_low_load(void) {
 			!engine_start_high_load_latched;
 }
 
+static bool engine_start_erpm_reached(float target_erpm) {
+	return engine_start_erpm_abs_filt >= (target_erpm - ENGINE_ERPM_REACHED_MARGIN);
+}
+
 static bool engine_start_observer_stable(void) {
 	return engine_start_obs_stable_ms >= engine_start_params.obs_stable_time_ms;
 }
@@ -1976,7 +1982,7 @@ static void engine_start_update(float dt) {
 		utils_truncate_number(&engine_start_openloop_erpm, engine_start_params.pull_start_erpm, engine_start_params.pull_target_erpm);
 		engine_start_set_openloop_current(engine_start_params.pull_current, engine_start_openloop_erpm, dt);
 		if (compression || engine_start_high_load() ||
-				engine_start_erpm_abs_filt >= engine_start_params.pull_target_erpm) {
+				engine_start_erpm_reached(engine_start_params.pull_target_erpm)) {
 			engine_start_enter(ENGINE_START_LOAD_DETECT);
 		}
 		break;
@@ -1988,9 +1994,9 @@ static void engine_start_update(float dt) {
 		} else if (engine_start_high_load()) {
 			engine_start_enter(ENGINE_START_PULSE);
 		} else if (engine_start_low_load() &&
-				engine_start_erpm_abs_filt >= engine_start_params.boost_success_erpm) {
+				engine_start_erpm_reached(engine_start_params.boost_success_erpm)) {
 			engine_start_enter(ENGINE_START_ACCEL);
-		} else if (engine_start_erpm_abs_filt >= engine_start_params.pull_target_erpm) {
+		} else if (engine_start_erpm_reached(engine_start_params.pull_target_erpm)) {
 			engine_start_enter(ENGINE_START_ACCEL);
 		} else {
 			engine_start_enter(ENGINE_START_PULL);
@@ -2005,7 +2011,7 @@ static void engine_start_update(float dt) {
 		if (pulse_min_time_counter < ((float)ENGINE_PULSE_MIN_MS / 1000.0f)) {
 			break;
 		}
-		if (engine_start_erpm_abs_filt >= engine_start_params.boost_success_erpm) {
+		if (engine_start_erpm_reached(engine_start_params.boost_success_erpm)) {
 			engine_start_enter(ENGINE_START_GAP);
 		} else if (engine_start_accel_filt <= 0.0f &&
 				engine_start_load_delta >= 0.0f &&
@@ -2022,7 +2028,7 @@ static void engine_start_update(float dt) {
 		if (stall) {
 			engine_start_enter(ENGINE_START_BACKOFF);
 		} else if (engine_start_low_load() &&
-				engine_start_erpm_abs_filt >= engine_start_params.boost_success_erpm) {
+				engine_start_erpm_reached(engine_start_params.boost_success_erpm)) {
 			engine_start_enter(ENGINE_START_ACCEL);
 		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.boost_gap_ms) {
 			if (engine_start_boost_pulse_count < engine_start_params.boost_max_pulses &&
