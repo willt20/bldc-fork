@@ -369,12 +369,12 @@ engine-period-ms = 33.0 ms
 
 ### 9.1 自动比例计算
 
-默认不再推荐直接调 `boost-pulse-ms`、`boost-gap-ms`、`prewarn-hold-ms`。固件会用 `engine-period-ms` 统一计算启动节奏：
+默认不再推荐直接调 `boost-pulse-ms`、`boost-gap-ms`、`prewarn-hold-ms`。所有 Timing 更新统一由 `engine_start_update_timing()` 完成；固件会用 `engine-period-ms` 和 ratio 参数统一计算启动节奏：
 
 ```text
-boost-pulse-ms  = engine-period-ms × pulse_ratio   = engine-period-ms × 1.20
-prewarn-hold-ms = engine-period-ms × prewarn_ratio = engine-period-ms × 0.82
-boost-gap-ms    = engine-period-ms × gap_ratio     = engine-period-ms × 0.52
+boost-pulse-ms  = engine-period-ms × pulse-ratio   = engine-period-ms × 1.20
+prewarn-hold-ms = engine-period-ms × prewarn-ratio = engine-period-ms × 0.82
+boost-gap-ms    = engine-period-ms × gap-ratio     = engine-period-ms × 0.52
 ```
 
 默认 33ms 时：
@@ -385,7 +385,19 @@ prewarn-hold-ms ≈ 27.1 ms，约 27 ms
 boost-gap-ms    ≈ 17.2 ms，约 17 ms
 ```
 
-### 9.2 安全 clamp
+### 9.2 Ratio 参数
+
+高级调试可以运行时修改 ratio，普通用户优先只改 `engine-period-ms`：
+
+```lisp
+(engine-param-set 'pulse-ratio 1.20)
+(engine-param-set 'prewarn-ratio 0.82)
+(engine-param-set 'gap-ratio 0.52)
+```
+
+ratio 修改后也会通过 `engine_start_update_timing()` 重新计算未被人工 override 的 timing 参数，不需要重新编译。
+
+### 9.3 安全 clamp
 
 自动计算结果会做安全限幅：
 
@@ -395,7 +407,7 @@ boost-gap-ms    ≈ 17.2 ms，约 17 ms
 | `prewarn-hold-ms` | `15 ~ 60 ms` |
 | `boost-gap-ms` | `8 ~ 40 ms` |
 
-### 9.3 人工参数优先
+### 9.4 人工参数优先
 
 如果用户主动执行：
 
@@ -415,7 +427,23 @@ boost-gap-ms    ≈ 17.2 ms，约 17 ms
 
 会清除这些人工 override 标志，并恢复周期自适应默认节奏。
 
-### 9.4 调试优先级
+### 9.5 Timing Mode 输出
+
+`engine_status` 和 `(engine-status)` 会输出 Timing Mode。当前实现使用 bitmask：
+
+| bit | 含义 |
+|---:|---|
+| `0` | `boost-pulse-ms` 为 MANUAL，否则 AUTO |
+| `1` | `boost-gap-ms` 为 MANUAL，否则 AUTO |
+| `2` | `prewarn-hold-ms` 为 MANUAL，否则 AUTO |
+
+Terminal 会直接打印：
+
+```text
+Engine start timing mode  : pulse AUTO, gap AUTO, prewarn MANUAL
+```
+
+### 9.6 调试优先级
 
 - 卡压缩：优先把 `boost-current-1/2/3` 每档增加约 `20A`；其次把 `engine-period-ms` 增加 `1ms`，不要先直接改 `boost-pulse-ms`。
 - Kickback / 反冲：优先降低 `boost-current-3`；其次把 `engine-period-ms` 降低 `1ms`；如果仍存在，再考虑调整 gap ratio 对应的固件宏，不要先直接改 `boost-gap-ms`。
@@ -463,6 +491,9 @@ boost-gap-ms    ≈ 17.2 ms，约 17 ms
 | `backoff-erpm` | `ENGINE_START_PARAM_BACKOFF_ERPM` | `-100.0` | eRPM | 反向卸力速度，仅启用 backoff reverse 时使用 |
 | `engine-period-ms` | `ENGINE_START_PARAM_ENGINE_PERIOD_MS` | `33.0` | ms | 机械压缩周期参考值；默认用于自动计算 pulse / gap / prewarn timing |
 | `prewarn-hold-ms` | `ENGINE_START_PARAM_PREWARN_HOLD_MS` | `≈27.1` | ms | pre-warning 保持时间；默认由 `engine-period-ms × 0.82` 自动计算，人工设置后优先 |
+| `pulse-ratio` | `ENGINE_START_PARAM_PULSE_RATIO` | `1.20` | ratio | `boost-pulse-ms` 周期比例，高级标定参数 |
+| `prewarn-ratio` | `ENGINE_START_PARAM_PREWARN_RATIO` | `0.82` | ratio | `prewarn-hold-ms` 周期比例，高级标定参数 |
+| `gap-ratio` | `ENGINE_START_PARAM_GAP_RATIO` | `0.52` | ratio | `boost-gap-ms` 周期比例，高级标定参数 |
 
 ### 10.1 内部稳定性宏参数
 
@@ -504,6 +535,7 @@ boost-gap-ms    ≈ 17.2 ms，约 17 ms
 - `backoff-reverse-enable` 必须在 `0.0 ~ 1.0`。
 - 时间类参数必须大于 0，避免除零或无意义状态。
 - `engine-period-ms` 必须大于 0；推荐按实测机械周期使用 `31 ~ 35ms`。
+- `pulse-ratio`、`prewarn-ratio`、`gap-ratio` 必须大于 0 且不超过 5，普通标定建议围绕默认值小幅调整。
 - 其他参数必须大于等于 0。
 
 ## 12. V3/V4 自适应标定与稳定锁定
@@ -670,7 +702,7 @@ ENGINE_START_TEST.lisp
 (engine-start)
 (engine-stop)
 (engine-start-active)
-(engine-status) ; 返回 (state active retry-count boost-pulse-count total-pulse-count openloop-erpm openloop-phase blend iq-target erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta compression-ms stall-ms obs-stable-ms last-stop-reason)
+(engine-status) ; 返回 (state active retry-count boost-pulse-count total-pulse-count openloop-erpm openloop-phase blend iq-target erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta compression-ms stall-ms obs-stable-ms last-stop-reason stability-score learning-state learning-window-count consecutive-success strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode timing-mode)
 ```
 
 ### 读取参数
@@ -680,12 +712,19 @@ ENGINE_START_TEST.lisp
 (engine-param-get 'pull-current)
 (engine-param-get 'stall-duty)
 (engine-param-get 'engine-period-ms)
+(engine-param-get 'pulse-ratio)
+(engine-param-get 'prewarn-ratio)
+(engine-param-get 'gap-ratio)
 ```
 
 ### 修改参数
 
 ```lisp
 (engine-param-set 'engine-period-ms 33.0)
+; 高级 timing 标定，不需要时保持默认
+(engine-param-set 'pulse-ratio 1.20)
+(engine-param-set 'prewarn-ratio 0.82)
+(engine-param-set 'gap-ratio 0.52)
 (engine-param-set 'boost-current-1 100.0)
 (engine-param-set 'boost-current-2 130.0)
 (engine-param-set 'boost-current-3 160.0)
@@ -709,6 +748,10 @@ ENGINE_START_TEST.lisp
 ; 温和一点的首轮参数
 (engine-param-set 'pull-current 100.0)
 (engine-param-set 'engine-period-ms 33.0)
+; 高级 timing 标定，不需要时保持默认
+(engine-param-set 'pulse-ratio 1.20)
+(engine-param-set 'prewarn-ratio 0.82)
+(engine-param-set 'gap-ratio 0.52)
 (engine-param-set 'boost-current-1 100.0)
 (engine-param-set 'boost-current-2 130.0)
 (engine-param-set 'boost-current-3 160.0)

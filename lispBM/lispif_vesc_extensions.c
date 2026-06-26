@@ -1917,7 +1917,10 @@ static char *engine_start_param_names[ENGINE_START_PARAM_NUM] = {
 	"backoff-current",
 	"backoff-erpm",
 	"engine-period-ms",
-	"prewarn-hold-ms"
+	"prewarn-hold-ms",
+	"pulse-ratio",
+	"prewarn-ratio",
+	"gap-ratio"
 };
 static lbm_uint engine_start_param_syms[ENGINE_START_PARAM_NUM];
 
@@ -1991,6 +1994,7 @@ static lbm_value ext_engine_start_status(lbm_value *args, lbm_uint argn) {
 	}
 
 	lbm_value res = ENC_SYM_NIL;
+	res = lbm_cons(lbm_enc_i(status.timing_mode), res);
 	res = lbm_cons(lbm_enc_i(status.policy_mode), res);
 	res = lbm_cons(lbm_enc_float(status.learning_gain), res);
 	res = lbm_cons(lbm_enc_float(status.v6_confidence), res);

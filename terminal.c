@@ -1184,7 +1184,11 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 			commands_printf("Engine start V6 confidence: %.3f", (double)status.v6_confidence);
 			commands_printf("Engine start learn gain   : %.3f", (double)status.learning_gain);
 			commands_printf("Engine start policy mode  : %d", status.policy_mode);
-		} else {
+			commands_printf("Engine start timing mode  : pulse %s, gap %s, prewarn %s",
+					(status.timing_mode & (1 << 0)) ? "MANUAL" : "AUTO",
+					(status.timing_mode & (1 << 1)) ? "MANUAL" : "AUTO",
+					(status.timing_mode & (1 << 2)) ? "MANUAL" : "AUTO");
+			} else {
 			commands_printf("Engine start status unavailable");
 		}
 	} else if (strcmp(argv[0], "drv_reset_faults") == 0) {

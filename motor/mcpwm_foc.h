@@ -65,6 +65,9 @@ typedef enum {
 	ENGINE_START_PARAM_BACKOFF_ERPM,
 	ENGINE_START_PARAM_ENGINE_PERIOD_MS,
 	ENGINE_START_PARAM_PREWARN_HOLD_MS,
+	ENGINE_START_PARAM_PULSE_RATIO,
+	ENGINE_START_PARAM_PREWARN_RATIO,
+	ENGINE_START_PARAM_GAP_RATIO,
 	ENGINE_START_PARAM_NUM
 } engine_start_param_id_t;
 
@@ -110,6 +113,7 @@ typedef struct {
 	float v6_confidence;
 	float learning_gain;
 	int policy_mode;
+	int timing_mode;
 } engine_start_status_t;
 
 // Functions

@@ -13,7 +13,7 @@
 ;  erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta
 ;  compression-ms stall-ms obs-stable-ms last-stop-reason
 ;  stability-score learning-state learning-window-count consecutive-success
-;  strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode)
+;  strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode timing-mode)
 ;
 ; State ids:
 ; 0 IDLE, 1 ALIGN, 2 PULL, 3 LOAD_DETECT, 4 PULSE, 5 GAP,
@@ -22,6 +22,7 @@
 ; Policy modes:
 ; 0 V5_ONLY, 1 V6_ONLY, 2 HYBRID_LOCKED
 ; v6-confidence is clamped to 0.30..0.95 before policy arbitration.
+; Timing mode bitmask: bit0 pulse manual, bit1 gap manual, bit2 prewarn manual. 0 means all AUTO.
 ;
 ; Stop reasons:
 ; 0 NONE, 1 USER, 2 TIMEOUT, 3 UNDERVOLTAGE, 4 FAULT,
@@ -38,6 +39,9 @@
         (print "boost-current-2=" (engine-param-get 'boost-current-2))
         (print "boost-current-3=" (engine-param-get 'boost-current-3))
         (print "engine-period-ms=" (engine-param-get 'engine-period-ms))
+        (print "pulse-ratio=" (engine-param-get 'pulse-ratio))
+        (print "prewarn-ratio=" (engine-param-get 'prewarn-ratio))
+        (print "gap-ratio=" (engine-param-get 'gap-ratio))
         (print "boost-pulse-ms=" (engine-param-get 'boost-pulse-ms))
         (print "boost-gap-ms=" (engine-param-get 'boost-gap-ms))
         (print "prewarn-hold-ms=" (engine-param-get 'prewarn-hold-ms))
@@ -90,6 +94,10 @@
         ; as about 40 ms / 17 ms / 27 ms. Do not set pulse/gap/prewarn manually
         ; unless you intentionally want to override the period-based timing.
         (engine-param-set 'engine-period-ms 33.0)
+        ; Advanced timing calibration. Keep these defaults unless engine-period alone is insufficient.
+        (engine-param-set 'pulse-ratio 1.20)
+        (engine-param-set 'prewarn-ratio 0.82)
+        (engine-param-set 'gap-ratio 0.52)
 
         ; Pulsed boost current ladder. Start lower than firmware maximum during first shakedown.
         (engine-param-set 'boost-current-1 100.0)

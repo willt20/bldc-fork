@@ -163,6 +163,10 @@ typedef enum {
 	ENGINE_START_FAULT
 } engine_start_state_t;
 
+#define ENGINE_TIMING_MODE_PULSE_MANUAL   (1 << 0)
+#define ENGINE_TIMING_MODE_GAP_MANUAL     (1 << 1)
+#define ENGINE_TIMING_MODE_PREWARN_MANUAL (1 << 2)
+
 typedef struct {
 	float align_current;
 	float align_time_ms;
@@ -201,6 +205,9 @@ typedef struct {
 	float backoff_current;
 	float backoff_erpm;
 	float engine_period_ms;
+	float pulse_ratio;
+	float prewarn_ratio;
+	float gap_ratio;
 } engine_start_params_t;
 
 typedef enum {
@@ -362,7 +369,10 @@ static engine_start_params_t engine_start_params = {
 	.backoff_reverse_enable = ENGINE_BACKOFF_REVERSE_ENABLE,
 	.backoff_current = ENGINE_BACKOFF_CURRENT,
 	.backoff_erpm = ENGINE_BACKOFF_ERPM,
-	.engine_period_ms = ENGINE_PERIOD_MS
+	.engine_period_ms = ENGINE_PERIOD_MS,
+	.pulse_ratio = ENGINE_PULSE_RATIO,
+	.prewarn_ratio = ENGINE_PREWARN_RATIO,
+	.gap_ratio = ENGINE_GAP_RATIO
 };
 #endif
 
@@ -1068,10 +1078,10 @@ static int engine_start_elapsed_ms(systime_t t) {
 	return ST2MS(chVTTimeElapsedSinceX(t));
 }
 
-static void engine_start_apply_period_timing(void) {
-	float boost_pulse_ms = engine_start_params.engine_period_ms * ENGINE_PULSE_RATIO;
-	float prewarn_hold_ms = engine_start_params.engine_period_ms * ENGINE_PREWARN_RATIO;
-	float boost_gap_ms = engine_start_params.engine_period_ms * ENGINE_GAP_RATIO;
+static void engine_start_update_timing(void) {
+	float boost_pulse_ms = engine_start_params.engine_period_ms * engine_start_params.pulse_ratio;
+	float prewarn_hold_ms = engine_start_params.engine_period_ms * engine_start_params.prewarn_ratio;
+	float boost_gap_ms = engine_start_params.engine_period_ms * engine_start_params.gap_ratio;
 
 	utils_truncate_number(&boost_pulse_ms, ENGINE_BOOST_PULSE_MIN_MS, ENGINE_BOOST_PULSE_MAX_MS);
 	utils_truncate_number(&prewarn_hold_ms, ENGINE_PREWARN_MIN_MS, ENGINE_PREWARN_MAX_MS);
@@ -1132,10 +1142,13 @@ static void engine_start_params_load_defaults(void) {
 	engine_start_params.backoff_current = ENGINE_BACKOFF_CURRENT;
 	engine_start_params.backoff_erpm = ENGINE_BACKOFF_ERPM;
 	engine_start_params.engine_period_ms = ENGINE_PERIOD_MS;
+	engine_start_params.pulse_ratio = ENGINE_PULSE_RATIO;
+	engine_start_params.prewarn_ratio = ENGINE_PREWARN_RATIO;
+	engine_start_params.gap_ratio = ENGINE_GAP_RATIO;
 	engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
 	engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
 	engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
-	engine_start_apply_period_timing();
+	engine_start_update_timing();
 }
 
 static float *engine_start_param_ptr(engine_start_param_id_t param) {
@@ -1178,6 +1191,9 @@ static float *engine_start_param_ptr(engine_start_param_id_t param) {
 	case ENGINE_START_PARAM_BACKOFF_ERPM: return &engine_start_params.backoff_erpm;
 	case ENGINE_START_PARAM_ENGINE_PERIOD_MS: return &engine_start_params.engine_period_ms;
 	case ENGINE_START_PARAM_PREWARN_HOLD_MS: return &engine_start_load_prewarn_hold_ms;
+	case ENGINE_START_PARAM_PULSE_RATIO: return &engine_start_params.pulse_ratio;
+	case ENGINE_START_PARAM_PREWARN_RATIO: return &engine_start_params.prewarn_ratio;
+	case ENGINE_START_PARAM_GAP_RATIO: return &engine_start_params.gap_ratio;
 	default: return 0;
 	}
 }
@@ -1192,6 +1208,10 @@ static bool engine_start_param_valid(engine_start_param_id_t param, float value)
 		return fabsf(value) >= 0.5f && fabsf(value) <= 1.0f;
 	case ENGINE_START_PARAM_BACKOFF_REVERSE_ENABLE:
 		return value >= 0.0f && value <= 1.0f;
+	case ENGINE_START_PARAM_PULSE_RATIO:
+	case ENGINE_START_PARAM_PREWARN_RATIO:
+	case ENGINE_START_PARAM_GAP_RATIO:
+		return value > 0.0f && value <= 5.0f;
 	case ENGINE_START_PARAM_STALL_DUTY:
 		return value >= 0.0f && value <= 1.0f;
 	case ENGINE_START_PARAM_MAX_RETRY:
@@ -1244,7 +1264,11 @@ bool mcpwm_foc_engine_start_set_param(engine_start_param_id_t param, float value
 	} else if (param == ENGINE_START_PARAM_PREWARN_HOLD_MS) {
 		engine_start_manual_prewarn_hold_ms = true;
 	} else if (param == ENGINE_START_PARAM_ENGINE_PERIOD_MS) {
-		engine_start_apply_period_timing();
+		engine_start_update_timing();
+	} else if (param == ENGINE_START_PARAM_PULSE_RATIO ||
+			param == ENGINE_START_PARAM_PREWARN_RATIO ||
+			param == ENGINE_START_PARAM_GAP_RATIO) {
+		engine_start_update_timing();
 	}
 	return true;
 }
@@ -1294,6 +1318,10 @@ bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
 	status->v6_confidence = engine_start_v6_confidence;
 	status->learning_gain = engine_start_learning_gain;
 	status->policy_mode = (int)engine_start_policy_mode;
+	status->timing_mode =
+			(engine_start_manual_boost_pulse_ms ? ENGINE_TIMING_MODE_PULSE_MANUAL : 0) |
+			(engine_start_manual_boost_gap_ms ? ENGINE_TIMING_MODE_GAP_MANUAL : 0) |
+			(engine_start_manual_prewarn_hold_ms ? ENGINE_TIMING_MODE_PREWARN_MANUAL : 0);
 	return true;
 }
 
