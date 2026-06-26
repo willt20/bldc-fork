@@ -427,7 +427,7 @@ ratio 修改后也会通过 `engine_start_update_timing()` 重新计算未被人
 
 会清除这些人工 override 标志，并恢复周期自适应默认节奏。
 
-### 9.5 Timing Mode 输出
+### 9.5 Timing Mode 和 Clamp 输出
 
 `engine_status` 和 `(engine-status)` 会输出 Timing Mode。当前实现使用 bitmask：
 
@@ -437,13 +437,31 @@ ratio 修改后也会通过 `engine_start_update_timing()` 重新计算未被人
 | `1` | `boost-gap-ms` 为 MANUAL，否则 AUTO |
 | `2` | `prewarn-hold-ms` 为 MANUAL，否则 AUTO |
 
+Timing Clamp Status 也使用 bitmask，只读、不可写，用于观察 `engine_period_ms × ratio` 后是否被安全限幅截断：
+
+| bit | 含义 |
+|---:|---|
+| `0` | `boost-pulse-ms` 自动计算结果发生 clamp |
+| `1` | `boost-gap-ms` 自动计算结果发生 clamp |
+| `2` | `prewarn-hold-ms` 自动计算结果发生 clamp |
+
 Terminal 会直接打印：
 
 ```text
-Engine start timing mode  : pulse AUTO, gap AUTO, prewarn MANUAL
+ES timing mode  : 0x04
+ES timing clamp : pulse NORMAL, gap NORMAL, prewarn CLAMPED
 ```
 
-### 9.6 调试优先级
+### 9.6 Clamp 观测用途
+
+Timing clamp 只记录状态，不改变任何 timing 计算结果和控制输出。它用于实车标定时判断 ratio 是否已经触及安全边界：
+
+- `NORMAL`：ratio 计算值在允许范围内。
+- `CLAMPED`：ratio 计算值超出安全范围，实际 timing 已被限制到 min/max。
+
+如果发现持续 `CLAMPED`，说明继续调整 ratio 已经不会线性改变实际 timing，应优先重新评估 `engine-period-ms` 或 ratio 标定范围。
+
+### 9.7 调试优先级
 
 - 卡压缩：优先把 `boost-current-1/2/3` 每档增加约 `20A`；其次把 `engine-period-ms` 增加 `1ms`，不要先直接改 `boost-pulse-ms`。
 - Kickback / 反冲：优先降低 `boost-current-3`；其次把 `engine-period-ms` 降低 `1ms`；如果仍存在，再考虑调整 gap ratio 对应的固件宏，不要先直接改 `boost-gap-ms`。
@@ -702,7 +720,7 @@ ENGINE_START_TEST.lisp
 (engine-start)
 (engine-stop)
 (engine-start-active)
-(engine-status) ; 返回 (state active retry-count boost-pulse-count total-pulse-count openloop-erpm openloop-phase blend iq-target erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta compression-ms stall-ms obs-stable-ms last-stop-reason stability-score learning-state learning-window-count consecutive-success strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode timing-mode)
+(engine-status) ; 返回 (state active retry-count boost-pulse-count total-pulse-count openloop-erpm openloop-phase blend iq-target erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta compression-ms stall-ms obs-stable-ms last-stop-reason stability-score learning-state learning-window-count consecutive-success strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode timing-mode timing-clamp-status)
 ```
 
 ### 读取参数

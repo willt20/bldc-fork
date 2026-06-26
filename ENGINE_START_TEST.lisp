@@ -13,7 +13,7 @@
 ;  erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta
 ;  compression-ms stall-ms obs-stable-ms last-stop-reason
 ;  stability-score learning-state learning-window-count consecutive-success
-;  strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode timing-mode)
+;  strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode timing-mode timing-clamp-status)
 ;
 ; State ids:
 ; 0 IDLE, 1 ALIGN, 2 PULL, 3 LOAD_DETECT, 4 PULSE, 5 GAP,
@@ -23,6 +23,7 @@
 ; 0 V5_ONLY, 1 V6_ONLY, 2 HYBRID_LOCKED
 ; v6-confidence is clamped to 0.30..0.95 before policy arbitration.
 ; Timing mode bitmask: bit0 pulse manual, bit1 gap manual, bit2 prewarn manual. 0 means all AUTO.
+; Timing clamp bitmask: bit0 pulse clamped, bit1 gap clamped, bit2 prewarn clamped. 0 means no clamp.
 ;
 ; Stop reasons:
 ; 0 NONE, 1 USER, 2 TIMEOUT, 3 UNDERVOLTAGE, 4 FAULT,

@@ -1994,6 +1994,7 @@ static lbm_value ext_engine_start_status(lbm_value *args, lbm_uint argn) {
 	}
 
 	lbm_value res = ENC_SYM_NIL;
+	res = lbm_cons(lbm_enc_i(status.timing_clamp_status), res);
 	res = lbm_cons(lbm_enc_i(status.timing_mode), res);
 	res = lbm_cons(lbm_enc_i(status.policy_mode), res);
 	res = lbm_cons(lbm_enc_float(status.learning_gain), res);

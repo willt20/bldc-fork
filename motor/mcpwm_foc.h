@@ -25,6 +25,9 @@
 #include "foc_math.h"
 #include <stdbool.h>
 
+#define ENGINE_TIMING_CLAMP_PULSE   (1 << 0)
+#define ENGINE_TIMING_CLAMP_GAP     (1 << 1)
+#define ENGINE_TIMING_CLAMP_PREWARN (1 << 2)
 
 typedef enum {
 	ENGINE_START_PARAM_ALIGN_CURRENT = 0,
@@ -114,6 +117,7 @@ typedef struct {
 	float learning_gain;
 	int policy_mode;
 	int timing_mode;
+	uint8_t timing_clamp_status;
 } engine_start_status_t;
 
 // Functions

@@ -332,6 +332,7 @@ static float engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
 static bool engine_start_manual_boost_pulse_ms = false;
 static bool engine_start_manual_boost_gap_ms = false;
 static bool engine_start_manual_prewarn_hold_ms = false;
+static uint8_t engine_start_timing_clamp_status = 0;
 static engine_start_params_t engine_start_params = {
 	.align_current = ENGINE_ALIGN_CURRENT,
 	.align_time_ms = ENGINE_ALIGN_TIME_MS,
@@ -1083,6 +1084,17 @@ static void engine_start_update_timing(void) {
 	float prewarn_hold_ms = engine_start_params.engine_period_ms * engine_start_params.prewarn_ratio;
 	float boost_gap_ms = engine_start_params.engine_period_ms * engine_start_params.gap_ratio;
 
+	engine_start_timing_clamp_status = 0;
+	if (boost_pulse_ms < ENGINE_BOOST_PULSE_MIN_MS || boost_pulse_ms > ENGINE_BOOST_PULSE_MAX_MS) {
+		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_PULSE;
+	}
+	if (prewarn_hold_ms < ENGINE_PREWARN_MIN_MS || prewarn_hold_ms > ENGINE_PREWARN_MAX_MS) {
+		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_PREWARN;
+	}
+	if (boost_gap_ms < ENGINE_BOOST_GAP_MIN_MS || boost_gap_ms > ENGINE_BOOST_GAP_MAX_MS) {
+		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_GAP;
+	}
+
 	utils_truncate_number(&boost_pulse_ms, ENGINE_BOOST_PULSE_MIN_MS, ENGINE_BOOST_PULSE_MAX_MS);
 	utils_truncate_number(&prewarn_hold_ms, ENGINE_PREWARN_MIN_MS, ENGINE_PREWARN_MAX_MS);
 	utils_truncate_number(&boost_gap_ms, ENGINE_BOOST_GAP_MIN_MS, ENGINE_BOOST_GAP_MAX_MS);
@@ -1322,6 +1334,7 @@ bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
 			(engine_start_manual_boost_pulse_ms ? ENGINE_TIMING_MODE_PULSE_MANUAL : 0) |
 			(engine_start_manual_boost_gap_ms ? ENGINE_TIMING_MODE_GAP_MANUAL : 0) |
 			(engine_start_manual_prewarn_hold_ms ? ENGINE_TIMING_MODE_PREWARN_MANUAL : 0);
+	status->timing_clamp_status = engine_start_timing_clamp_status;
 	return true;
 }
 

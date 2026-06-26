@@ -1181,14 +1181,14 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 			commands_printf("Engine start learn window : %d, consecutive success %d", status.learning_window_count, status.consecutive_success);
 			commands_printf("Engine start strategy     : %d, knowledge entries %d", status.strategy, status.knowledge_count);
 			commands_printf("Engine start avg time     : %.1f ms", (double)status.avg_start_time_ms);
-			commands_printf("Engine start V6 confidence: %.3f", (double)status.v6_confidence);
-			commands_printf("Engine start learn gain   : %.3f", (double)status.learning_gain);
-			commands_printf("Engine start policy mode  : %d", status.policy_mode);
-			commands_printf("Engine start timing mode  : pulse %s, gap %s, prewarn %s",
-					(status.timing_mode & (1 << 0)) ? "MANUAL" : "AUTO",
-					(status.timing_mode & (1 << 1)) ? "MANUAL" : "AUTO",
-					(status.timing_mode & (1 << 2)) ? "MANUAL" : "AUTO");
-			} else {
+			commands_printf("ES V6 confidence: %.3f", (double)status.v6_confidence);
+			commands_printf("ES policy mode  : %d", status.policy_mode);
+			commands_printf("ES timing mode  : 0x%02X", status.timing_mode);
+			commands_printf("ES timing clamp : pulse %s, gap %s, prewarn %s",
+					(status.timing_clamp_status & ENGINE_TIMING_CLAMP_PULSE) ? "CLAMPED" : "NORMAL",
+					(status.timing_clamp_status & ENGINE_TIMING_CLAMP_GAP) ? "CLAMPED" : "NORMAL",
+					(status.timing_clamp_status & ENGINE_TIMING_CLAMP_PREWARN) ? "CLAMPED" : "NORMAL");
+		} else {
 			commands_printf("Engine start status unavailable");
 		}
 	} else if (strcmp(argv[0], "drv_reset_faults") == 0) {
