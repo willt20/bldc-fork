@@ -55,16 +55,16 @@
 #define ENGINE_BOOST_CURRENT_1     160.0f
 #define ENGINE_BOOST_CURRENT_2     190.0f
 #define ENGINE_BOOST_CURRENT_3     220.0f
-#define ENGINE_PERIOD_MS           33.0f
-#define ENGINE_PULSE_RATIO         1.20f
-#define ENGINE_PREWARN_RATIO       0.82f
-#define ENGINE_GAP_RATIO           0.52f
-#define ENGINE_BOOST_PULSE_MIN_MS  20.0f
-#define ENGINE_BOOST_PULSE_MAX_MS  60.0f
-#define ENGINE_PREWARN_MIN_MS      15.0f
-#define ENGINE_PREWARN_MAX_MS      60.0f
-#define ENGINE_BOOST_GAP_MIN_MS    8.0f
-#define ENGINE_BOOST_GAP_MAX_MS    40.0f
+#define ENGINE_PERIOD_MS           34.0f
+#define ENGINE_PULSE_RATIO         0.35f
+#define ENGINE_PREWARN_RATIO       0.30f
+#define ENGINE_GAP_RATIO           0.35f
+#define ENGINE_BOOST_PULSE_MIN_MS  6.0f
+#define ENGINE_BOOST_PULSE_MAX_MS  20.0f
+#define ENGINE_PREWARN_MIN_MS      5.0f
+#define ENGINE_PREWARN_MAX_MS      20.0f
+#define ENGINE_BOOST_GAP_MIN_MS    6.0f
+#define ENGINE_BOOST_GAP_MAX_MS    25.0f
 #define ENGINE_BOOST_PULSE_MS      (ENGINE_PERIOD_MS * ENGINE_PULSE_RATIO)
 #define ENGINE_BOOST_TIME_MS       ENGINE_BOOST_PULSE_MS
 #define ENGINE_BOOST_GAP_MS        (ENGINE_PERIOD_MS * ENGINE_GAP_RATIO)
@@ -104,7 +104,7 @@
 #define ENGINE_LOAD_PREWARN_HOLD_MS (ENGINE_PERIOD_MS * ENGINE_PREWARN_RATIO)
 #define ENGINE_HIGH_LOAD_ENTER_MS  20
 #define ENGINE_HIGH_LOAD_EXIT_MS   50
-#define ENGINE_PULSE_MIN_MS        50
+#define ENGINE_PULSE_MIN_MS        ENGINE_BOOST_PULSE_MIN_MS
 #define ENGINE_STATE_DEBOUNCE_MS   10
 #define ENGINE_BACKOFF_RECOVER_HOLD_MS 200
 #define ENGINE_OVERCURRENT_CURRENT 260.0f
@@ -114,6 +114,11 @@
 #define ENGINE_BACKOFF_CURRENT     -40.0f
 #define ENGINE_BACKOFF_ERPM        -100.0f
 #define ENGINE_DIRECTION            1.0f
+#define ENGINE_PRELOAD_ENABLE        0.0f
+#define ENGINE_PRELOAD_CURRENT       -8.0f
+#define ENGINE_PRELOAD_TIME_MS       500.0f
+#define ENGINE_PRELOAD_SETTLE_MS     30.0f
+#define ENGINE_PULL_STALL_IGNORE_MS  300.0f
 #define ENGINE_ADAPTIVE_WINDOW       16
 #define ENGINE_ADAPTIVE_FAIL_CONFIRM 3
 #define ENGINE_ADAPTIVE_STEP         0.025f
@@ -150,6 +155,8 @@
 #if ENGINE_START_ENABLE
 typedef enum {
 	ENGINE_START_IDLE = 0,
+	ENGINE_START_PRELOAD,
+	ENGINE_START_PRELOAD_SETTLE,
 	ENGINE_START_ALIGN,
 	ENGINE_START_PULL,
 	ENGINE_START_LOAD_DETECT,
@@ -209,6 +216,11 @@ typedef struct {
 	float pulse_ratio;
 	float prewarn_ratio;
 	float gap_ratio;
+	float preload_enable;
+	float preload_current;
+	float preload_time_ms;
+	float preload_settle_ms;
+	float pull_stall_ignore_ms;
 } engine_start_params_t;
 
 typedef enum {
@@ -334,6 +346,7 @@ static bool engine_start_manual_boost_pulse_ms = false;
 static bool engine_start_manual_boost_gap_ms = false;
 static bool engine_start_manual_prewarn_hold_ms = false;
 static uint8_t engine_start_timing_clamp_status = 0;
+static bool engine_start_pull_stall_ignored = false;
 static engine_start_params_t engine_start_params = {
 	.align_current = ENGINE_ALIGN_CURRENT,
 	.align_time_ms = ENGINE_ALIGN_TIME_MS,
@@ -374,7 +387,12 @@ static engine_start_params_t engine_start_params = {
 	.engine_period_ms = ENGINE_PERIOD_MS,
 	.pulse_ratio = ENGINE_PULSE_RATIO,
 	.prewarn_ratio = ENGINE_PREWARN_RATIO,
-	.gap_ratio = ENGINE_GAP_RATIO
+	.gap_ratio = ENGINE_GAP_RATIO,
+	.preload_enable = ENGINE_PRELOAD_ENABLE,
+	.preload_current = ENGINE_PRELOAD_CURRENT,
+	.preload_time_ms = ENGINE_PRELOAD_TIME_MS,
+	.preload_settle_ms = ENGINE_PRELOAD_SETTLE_MS,
+	.pull_stall_ignore_ms = ENGINE_PULL_STALL_IGNORE_MS
 };
 #endif
 
@@ -414,6 +432,7 @@ static void engine_start_v5_select_strategy(void);
 static void engine_start_v5_apply_strategy(engine_strategy_t strategy);
 static void engine_start_v6_save_knowledge(void);
 static bool engine_start_v6_preload_knowledge(void);
+static bool engine_start_pull_stall_ignore_active(bool stall);
 static float engine_start_v6_similarity(const engine_start_knowledge_t *knowledge);
 #endif
 
@@ -1162,6 +1181,11 @@ static void engine_start_params_load_defaults(void) {
 	engine_start_params.pulse_ratio = ENGINE_PULSE_RATIO;
 	engine_start_params.prewarn_ratio = ENGINE_PREWARN_RATIO;
 	engine_start_params.gap_ratio = ENGINE_GAP_RATIO;
+	engine_start_params.preload_enable = ENGINE_PRELOAD_ENABLE;
+	engine_start_params.preload_current = ENGINE_PRELOAD_CURRENT;
+	engine_start_params.preload_time_ms = ENGINE_PRELOAD_TIME_MS;
+	engine_start_params.preload_settle_ms = ENGINE_PRELOAD_SETTLE_MS;
+	engine_start_params.pull_stall_ignore_ms = ENGINE_PULL_STALL_IGNORE_MS;
 	engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
 	engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
 	engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
@@ -1211,6 +1235,11 @@ static float *engine_start_param_ptr(engine_start_param_id_t param) {
 	case ENGINE_START_PARAM_PULSE_RATIO: return &engine_start_params.pulse_ratio;
 	case ENGINE_START_PARAM_PREWARN_RATIO: return &engine_start_params.prewarn_ratio;
 	case ENGINE_START_PARAM_GAP_RATIO: return &engine_start_params.gap_ratio;
+	case ENGINE_START_PARAM_PRELOAD_ENABLE: return &engine_start_params.preload_enable;
+	case ENGINE_START_PARAM_PRELOAD_CURRENT: return &engine_start_params.preload_current;
+	case ENGINE_START_PARAM_PRELOAD_TIME_MS: return &engine_start_params.preload_time_ms;
+	case ENGINE_START_PARAM_PRELOAD_SETTLE_MS: return &engine_start_params.preload_settle_ms;
+	case ENGINE_START_PARAM_PULL_STALL_IGNORE_MS: return &engine_start_params.pull_stall_ignore_ms;
 	default: return 0;
 	}
 }
@@ -1224,6 +1253,7 @@ static bool engine_start_param_valid(engine_start_param_id_t param, float value)
 	case ENGINE_START_PARAM_DIRECTION:
 		return fabsf(value) >= 0.5f && fabsf(value) <= 1.0f;
 	case ENGINE_START_PARAM_BACKOFF_REVERSE_ENABLE:
+	case ENGINE_START_PARAM_PRELOAD_ENABLE:
 		return value >= 0.0f && value <= 1.0f;
 	case ENGINE_START_PARAM_PULSE_RATIO:
 	case ENGINE_START_PARAM_PREWARN_RATIO:
@@ -1248,7 +1278,12 @@ static bool engine_start_param_valid(engine_start_param_id_t param, float value)
 	case ENGINE_START_PARAM_OBS_STABLE_TIME_MS:
 	case ENGINE_START_PARAM_STALL_CONFIRM_MS:
 	case ENGINE_START_PARAM_BACKOFF_MS:
+	case ENGINE_START_PARAM_PRELOAD_TIME_MS:
+	case ENGINE_START_PARAM_PRELOAD_SETTLE_MS:
+	case ENGINE_START_PARAM_PULL_STALL_IGNORE_MS:
 		return value > 0.0f;
+	case ENGINE_START_PARAM_PRELOAD_CURRENT:
+		return value <= 0.0f && value >= -30.0f;
 	case ENGINE_START_PARAM_BACKOFF_CURRENT:
 	case ENGINE_START_PARAM_BACKOFF_ERPM:
 		return true;
@@ -1340,6 +1375,11 @@ bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
 			(engine_start_manual_boost_gap_ms ? ENGINE_TIMING_MODE_GAP_MANUAL : 0) |
 			(engine_start_manual_prewarn_hold_ms ? ENGINE_TIMING_MODE_PREWARN_MANUAL : 0);
 	status->timing_clamp_status = engine_start_timing_clamp_status;
+	status->preload_enable = engine_start_params.preload_enable >= 0.5f ? 1 : 0;
+	status->preload_active = engine_start_state == ENGINE_START_PRELOAD || engine_start_state == ENGINE_START_PRELOAD_SETTLE;
+	status->preload_elapsed_ms = status->preload_active ? engine_start_elapsed_ms(engine_start_timer) : 0;
+	status->pull_elapsed_ms = engine_start_state == ENGINE_START_PULL ? engine_start_elapsed_ms(engine_start_timer) : 0;
+	status->pull_stall_ignored = engine_start_pull_stall_ignored;
 	return true;
 }
 
@@ -1378,6 +1418,7 @@ static void engine_start_reset(void) {
 	engine_start_stall_ms = 0;
 	engine_start_compression_ms = 0;
 	engine_start_obs_stable_ms = 0;
+	engine_start_pull_stall_ignored = false;
 	engine_start_last_stop_reason = ENGINE_STOP_NONE;
 	engine_start_attempt_recorded = false;
 	engine_start_timer = chVTGetSystemTimeX();
@@ -1420,7 +1461,7 @@ void mcpwm_foc_engine_start(void) {
 		engine_start_v5_select_strategy();
 	}
 	engine_start_active = true;
-	engine_start_state = ENGINE_START_ALIGN;
+	engine_start_state = engine_start_params.preload_enable >= 0.5f ? ENGINE_START_PRELOAD : ENGINE_START_ALIGN;
 	engine_start_timer = chVTGetSystemTimeX();
 	engine_start_global_timer = engine_start_timer;
 	engine_start_openloop_erpm = engine_start_params.pull_start_erpm;
@@ -1877,6 +1918,13 @@ static void engine_start_v6_save_knowledge(void) {
 	}
 }
 
+
+static bool engine_start_pull_stall_ignore_active(bool stall) {
+	return stall &&
+			engine_start_state == ENGINE_START_PULL &&
+			engine_start_elapsed_ms(engine_start_timer) < engine_start_params.pull_stall_ignore_ms;
+}
+
 static bool engine_start_v6_preload_knowledge(void) {
 	engine_start_v6_confidence = 0.0f;
 	if (engine_start_knowledge_count <= 0) {
@@ -1937,6 +1985,17 @@ static void engine_start_update(float dt) {
 	engine_start_update_filters(dt);
 	bool compression = engine_start_detect_compression();
 	bool stall = engine_start_detect_stall();
+	engine_start_pull_stall_ignored = false;
+	if (engine_start_state == ENGINE_START_PRELOAD || engine_start_state == ENGINE_START_PRELOAD_SETTLE) {
+		compression = false;
+		stall = false;
+	}
+	if (engine_start_pull_stall_ignore_active(stall)) {
+		// PULL startup can be low-ERPM on the bench; ignore only this early false stall window.
+		engine_start_pull_stall_ignored = true;
+		stall = false;
+		compression = false;
+	}
 	engine_start_update_high_load_latch(dt, compression);
 
 	if (engine_start_current_abs_filt > ENGINE_OVERCURRENT_CURRENT) {
@@ -1967,6 +2026,23 @@ static void engine_start_update(float dt) {
 	}
 
 	switch (engine_start_state) {
+	case ENGINE_START_PRELOAD:
+		// Optional low-current reverse preload before the normal ALIGN/PULL sequence.
+		engine_start_set_openloop_current(engine_start_params.preload_current, fabsf(engine_start_params.backoff_erpm), dt);
+		if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.preload_time_ms) {
+			engine_start_stop_output();
+			engine_start_enter(ENGINE_START_PRELOAD_SETTLE);
+		}
+		break;
+
+	case ENGINE_START_PRELOAD_SETTLE:
+		// Let the crank settle after reverse preload before starting the original flow.
+		engine_start_stop_output();
+		if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.preload_settle_ms) {
+			engine_start_enter(ENGINE_START_ALIGN);
+		}
+		break;
+
 	case ENGINE_START_ALIGN:
 		// Pre-position rotor with a fixed open-loop electrical angle before pulling the crank.
 		mcpwm_foc_set_openloop_phase(engine_start_params.align_current, 0.0f);
@@ -2108,7 +2184,7 @@ static void engine_start_update(float dt) {
 		if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.retry_delay_ms) {
 			engine_start_retry_count++;
 			if (engine_start_retry_count <= engine_start_params.max_retry) {
-				engine_start_enter(ENGINE_START_ALIGN);
+				engine_start_enter(engine_start_params.preload_enable >= 0.5f ? ENGINE_START_PRELOAD : ENGINE_START_ALIGN);
 			} else {
 				engine_start_fault(ENGINE_STOP_MAX_RETRY);
 			}

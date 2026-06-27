@@ -5,7 +5,7 @@
 ; Safety:
 ; - Put the vehicle/engine in a safe state before running this script.
 ; - Keep a hard power cut-off ready.
-; - This no-load script uses very low currents: align 5 A, pull 8 A, boost 10/12/15 A, accel 10 A.
+; - This no-load script uses very low currents: align 5 A, pull 12 A, boost 10/12/15 A, accel 10 A.
 ; - Do not use these currents as final engine-cranking values; increase gradually only after logs are stable.
 ; - If state enters FAULT, run (engine-stop) before starting again.
 ;
@@ -15,11 +15,12 @@
 ;  erpm-abs-filt current-abs-filt duty-abs-filt accel-filt load-score load-delta
 ;  compression-ms stall-ms obs-stable-ms last-stop-reason
 ;  stability-score learning-state learning-window-count consecutive-success
-;  strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode timing-mode timing-clamp-status)
+;  strategy knowledge-count avg-start-time-ms v6-confidence learning-gain policy-mode timing-mode timing-clamp-status
+;  preload-enable preload-active preload-elapsed-ms pull-elapsed-ms pull-stall-ignored)
 ;
 ; State ids:
-; 0 IDLE, 1 ALIGN, 2 PULL, 3 LOAD_DETECT, 4 PULSE, 5 GAP,
-; 6 BACKOFF, 7 RECOVER, 8 ACCEL, 9 BLEND, 10 RUN, 11 RETRY, 12 FAULT
+; 0 IDLE, 1 PRELOAD, 2 PRELOAD_SETTLE, 3 ALIGN, 4 PULL, 5 LOAD_DETECT,
+; 6 PULSE, 7 GAP, 8 BACKOFF, 9 RECOVER, 10 ACCEL, 11 BLEND, 12 RUN, 13 RETRY, 14 FAULT
 ;
 ; Policy modes:
 ; 0 V5_ONLY, 1 V6_ONLY, 2 HYBRID_LOCKED
@@ -49,6 +50,11 @@
         (print "boost-gap-ms=" (engine-param-get 'boost-gap-ms))
         (print "prewarn-hold-ms=" (engine-param-get 'prewarn-hold-ms))
         (print "boost-success-erpm=" (engine-param-get 'boost-success-erpm))
+        (print "preload-enable=" (engine-param-get 'preload-enable))
+        (print "preload-current=" (engine-param-get 'preload-current))
+        (print "preload-time-ms=" (engine-param-get 'preload-time-ms))
+        (print "preload-settle-ms=" (engine-param-get 'preload-settle-ms))
+        (print "pull-stall-ignore-ms=" (engine-param-get 'pull-stall-ignore-ms))
         (print "accel-current=" (engine-param-get 'accel-current))
         (print "accel-target-erpm=" (engine-param-get 'accel-target-erpm))
         (print "obs-min-erpm=" (engine-param-get 'obs-min-erpm))
@@ -89,7 +95,7 @@
 
         ; No-load current limits. Keep these low for first bench validation.
         (engine-param-set 'align-current 5.0)
-        (engine-param-set 'pull-current 8.0)
+        (engine-param-set 'pull-current 12.0)
         (engine-param-set 'accel-current 10.0)
 
         ; No-load speeds for 21 pole pairs. 85 KV * 25 V is about 44k eRPM no-load,
@@ -99,14 +105,14 @@
         (engine-param-set 'pull-target-erpm 3000.0)
         (engine-param-set 'pull-ramp-erpm-s 3000.0)
 
-        ; Mechanical-period adaptive timing. With 33 ms, pulse/gap/prewarn are auto-derived
-        ; as about 40 ms / 17 ms / 27 ms. Do not set pulse/gap/prewarn manually
-        ; unless you intentionally want to override the period-based timing.
-        (engine-param-set 'engine-period-ms 33.0)
-        ; Advanced timing calibration. Keep these defaults unless engine-period alone is insufficient.
-        (engine-param-set 'pulse-ratio 1.20)
-        (engine-param-set 'prewarn-ratio 0.82)
-        (engine-param-set 'gap-ratio 0.52)
+        ; Mechanical-period adaptive timing. With 34 ms, pulse/gap/prewarn are auto-derived
+        ; as about 12 ms / 12 ms / 10 ms for the measured 2..14 ms compression window.
+        ; Do not set pulse/gap/prewarn manually unless intentionally overriding auto timing.
+        (engine-param-set 'engine-period-ms 34.0)
+        ; Advanced timing ratios. Prefer engine-period-ms first; tune these only when necessary.
+        (engine-param-set 'pulse-ratio 0.35)
+        (engine-param-set 'prewarn-ratio 0.30)
+        (engine-param-set 'gap-ratio 0.35)
 
         ; Very low no-load pulsed boost ladder. If PULSE is entered unexpectedly, keep it safe.
         (engine-param-set 'boost-current-1 10.0)
@@ -134,7 +140,17 @@
         ; Global limits.
         (engine-param-set 'max-start-time-ms 5000.0)
         (engine-param-set 'max-total-pulses 2.0)
-        (engine-param-set 'max-retry 0.0)
+        (engine-param-set 'max-retry 1.0)
+
+        ; PULL false-stall guard for no-load low-current bench starts.
+        (engine-param-set 'pull-stall-ignore-ms 300.0)
+
+        ; Optional reverse preload is disabled for default no-load validation.
+        ; To verify it: set preload-enable=1, preload-current=-8, preload-time=500, settle=30.
+        (engine-param-set 'preload-enable 0.0)
+        (engine-param-set 'preload-current -8.0)
+        (engine-param-set 'preload-time-ms 500.0)
+        (engine-param-set 'preload-settle-ms 30.0)
 
         ; Default backoff only unloads. Do not enable reverse until mechanically validated.
         (engine-param-set 'backoff-ms 200.0)

@@ -71,6 +71,11 @@ typedef enum {
 	ENGINE_START_PARAM_PULSE_RATIO,
 	ENGINE_START_PARAM_PREWARN_RATIO,
 	ENGINE_START_PARAM_GAP_RATIO,
+	ENGINE_START_PARAM_PRELOAD_ENABLE,
+	ENGINE_START_PARAM_PRELOAD_CURRENT,
+	ENGINE_START_PARAM_PRELOAD_TIME_MS,
+	ENGINE_START_PARAM_PRELOAD_SETTLE_MS,
+	ENGINE_START_PARAM_PULL_STALL_IGNORE_MS,
 	ENGINE_START_PARAM_NUM
 } engine_start_param_id_t;
 
@@ -118,6 +123,11 @@ typedef struct {
 	int policy_mode;
 	int timing_mode;
 	uint8_t timing_clamp_status;
+	int preload_enable;
+	bool preload_active;
+	int preload_elapsed_ms;
+	int pull_elapsed_ms;
+	bool pull_stall_ignored;
 } engine_start_status_t;
 
 // Functions

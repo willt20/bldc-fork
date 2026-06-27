@@ -1139,19 +1139,10 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 	} else if (strcmp(argv[0], "engine_status") == 0) {
 		engine_start_status_t status;
 		if (mcpwm_foc_engine_start_get_status(&status)) {
-			static const char *state_names[] = {
-				"IDLE", "ALIGN", "PULL", "LOAD_DETECT", "PULSE",
-				"GAP", "BACKOFF", "RECOVER", "ACCEL", "BLEND", "RUN",
-				"RETRY", "FAULT"
-			};
 			static const char *stop_reason_names[] = {
 				"NONE", "USER", "TIMEOUT", "UNDERVOLTAGE", "FAULT",
 				"MAX_RETRY", "MAX_PULSES", "STALL", "OVERCURRENT"
 			};
-			const char *state_name = "UNKNOWN";
-			if (status.state >= 0 && status.state < (int)(sizeof(state_names) / sizeof(state_names[0]))) {
-				state_name = state_names[status.state];
-			}
 			const char *stop_reason_name = "UNKNOWN";
 			if (status.last_stop_reason >= 0 &&
 					status.last_stop_reason < (int)(sizeof(stop_reason_names) / sizeof(stop_reason_names[0]))) {
@@ -1159,7 +1150,7 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 			}
 
 			commands_printf("Engine start active       : %s", status.active ? "true" : "false");
-			commands_printf("Engine start state        : %s (%d)", state_name, status.state);
+			commands_printf("Engine start state        : %d", status.state);
 			commands_printf("Engine start retry count  : %d", status.retry_count);
 			commands_printf("Engine start pulse count  : %d / total %d", status.boost_pulse_count, status.total_pulse_count);
 			commands_printf("Engine start openloop erpm: %.1f", (double)status.openloop_erpm);
@@ -1184,6 +1175,9 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 			commands_printf("ES V6 confidence: %.3f", (double)status.v6_confidence);
 			commands_printf("ES policy mode  : %d", status.policy_mode);
 			commands_printf("ES timing mode  : 0x%02X", status.timing_mode);
+			commands_printf("ES pre: en%d act%d pre%d pull%d ign%d",
+					status.preload_enable, status.preload_active ? 1 : 0,
+					status.preload_elapsed_ms, status.pull_elapsed_ms, status.pull_stall_ignored ? 1 : 0);
 			commands_printf("ES timing clamp : pulse %s, gap %s, prewarn %s",
 					(status.timing_clamp_status & ENGINE_TIMING_CLAMP_PULSE) ? "CLAMPED" : "NORMAL",
 					(status.timing_clamp_status & ENGINE_TIMING_CLAMP_GAP) ? "CLAMPED" : "NORMAL",

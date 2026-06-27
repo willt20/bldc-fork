@@ -1920,7 +1920,12 @@ static char *engine_start_param_names[ENGINE_START_PARAM_NUM] = {
 	"prewarn-hold-ms",
 	"pulse-ratio",
 	"prewarn-ratio",
-	"gap-ratio"
+	"gap-ratio",
+	"preload-enable",
+	"preload-current",
+	"preload-time-ms",
+	"preload-settle-ms",
+	"pull-stall-ignore-ms"
 };
 static lbm_uint engine_start_param_syms[ENGINE_START_PARAM_NUM];
 
@@ -1994,6 +1999,11 @@ static lbm_value ext_engine_start_status(lbm_value *args, lbm_uint argn) {
 	}
 
 	lbm_value res = ENC_SYM_NIL;
+	res = lbm_cons(status.pull_stall_ignored ? ENC_SYM_TRUE : ENC_SYM_NIL, res);
+	res = lbm_cons(lbm_enc_i(status.pull_elapsed_ms), res);
+	res = lbm_cons(lbm_enc_i(status.preload_elapsed_ms), res);
+	res = lbm_cons(status.preload_active ? ENC_SYM_TRUE : ENC_SYM_NIL, res);
+	res = lbm_cons(lbm_enc_i(status.preload_enable), res);
 	res = lbm_cons(lbm_enc_i(status.timing_clamp_status), res);
 	res = lbm_cons(lbm_enc_i(status.timing_mode), res);
 	res = lbm_cons(lbm_enc_i(status.policy_mode), res);
