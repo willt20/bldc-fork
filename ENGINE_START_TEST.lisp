@@ -65,7 +65,7 @@
     (if (> n 0)
         {
             (print "status=" (engine-status))
-            (sleep 0.1)
+            (sleep 0.05)
             (engine-monitor (- n 1))
         }
         {
@@ -124,12 +124,12 @@
         (engine-param-set 'obs-stable-time-ms 200.0)
         (engine-param-set 'blend-time-ms 400.0)
 
-        ; Compression/stall detection. No-load should not reach these often.
-        (engine-param-set 'stall-erpm 200.0)
-        (engine-param-set 'stall-current 20.0)
-        (engine-param-set 'stall-duty 0.12)
+        ; Compression/stall detection. No-load should not false-trigger BACKOFF.
+        (engine-param-set 'stall-erpm 80.0)
+        (engine-param-set 'stall-current 60.0)
+        (engine-param-set 'stall-duty 0.20)
         (engine-param-set 'compression-time-ms 50.0)
-        (engine-param-set 'stall-confirm-ms 120.0)
+        (engine-param-set 'stall-confirm-ms 200.0)
 
         ; Global limits.
         (engine-param-set 'max-start-time-ms 5000.0)
@@ -154,8 +154,8 @@
         (print "=== START ===")
         (engine-start)
 
-        ; 60 samples * 0.1 s = 6 s. max-start-time-ms is 5 s, so this captures timeout/final state.
-        (engine-monitor 60)
+        ; 120 samples * 0.05 s = 6 s. max-start-time-ms is 5 s, so this captures fast transitions.
+        (engine-monitor 120)
 
         ; Always reset Engine Start after the scripted test window, even if it ended in FAULT.
         ; This releases the Engine Start FAULT state so normal VESC current/duty controls work again.
