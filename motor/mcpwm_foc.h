@@ -25,6 +25,44 @@
 #include "foc_math.h"
 #include <stdbool.h>
 
+typedef enum {
+	ENGINE_START_PARAM_ALIGN_CURRENT = 0,
+	ENGINE_START_PARAM_PULL_CURRENT,
+	ENGINE_START_PARAM_BOOST_CURRENT_1,
+	ENGINE_START_PARAM_BOOST_CURRENT_2,
+	ENGINE_START_PARAM_BOOST_CURRENT_3,
+	ENGINE_START_PARAM_ACCEL_CURRENT,
+	ENGINE_START_PARAM_MIN_VIN,
+	ENGINE_START_PARAM_MAX_START_TIME_MS,
+	ENGINE_START_PARAM_EVENT_CONFIDENCE_THRESHOLD,
+	ENGINE_START_PARAM_PULL_EVENT_TIMEOUT_MS,
+	ENGINE_START_PARAM_PULSE_EVENT_TIMEOUT_MS,
+	ENGINE_START_PARAM_PRELOAD_ENABLE,
+	ENGINE_START_PARAM_PRELOAD_CURRENT,
+	ENGINE_START_PARAM_PRELOAD_TIME_MS,
+	ENGINE_START_PARAM_NUM
+} engine_start_param_id_t;
+
+typedef enum {
+	ENGINE_STOP_NONE = 0,
+	ENGINE_STOP_USER,
+	ENGINE_STOP_TIMEOUT,
+	ENGINE_STOP_UNDERVOLTAGE,
+	ENGINE_STOP_FAULT,
+	ENGINE_STOP_MAX_RETRY,
+	ENGINE_STOP_MAX_PULSES,
+	ENGINE_STOP_STALL,
+	ENGINE_STOP_OVERCURRENT
+} engine_start_stop_reason_t;
+
+typedef struct {
+	int state;
+	int event_state;
+	float event_confidence;
+	int last_stop_reason;
+	bool active;
+} engine_start_status_t;
+
 // Functions
 void mcpwm_foc_init(mc_configuration *conf_m1, mc_configuration *conf_m2);
 void mcpwm_foc_deinit(void);
@@ -47,6 +85,13 @@ void mcpwm_foc_set_openloop_current(float current, float rpm);
 void mcpwm_foc_set_openloop_phase(float current, float phase);
 void mcpwm_foc_set_openloop_duty(float dutyCycle, float rpm);
 void mcpwm_foc_set_openloop_duty_phase(float dutyCycle, float phase);
+void mcpwm_foc_engine_start(void);
+void mcpwm_foc_engine_stop(void);
+bool mcpwm_foc_engine_start_is_active(void);
+bool mcpwm_foc_engine_start_set_param(engine_start_param_id_t param, float value);
+bool mcpwm_foc_engine_start_get_param(engine_start_param_id_t param, float *value);
+void mcpwm_foc_engine_start_reset_params(void);
+bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status);
 void mcpwm_foc_set_fw_override(float current);
 int mcpwm_foc_set_tachometer_value(int steps);
 float mcpwm_foc_get_duty_cycle_set(void);

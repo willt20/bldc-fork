@@ -71,9 +71,9 @@
  * 17 (3):  IN3		SENS3
  */
 
-#define HW_ADC_CHANNELS			18
+#define HW_ADC_CHANNELS			15
 #define HW_ADC_INJ_CHANNELS		3
-#define HW_ADC_NBR_CONV			6
+#define HW_ADC_NBR_CONV			5
 
 // ADC Indexes
 #define ADC_IND_SENS1			3
@@ -87,8 +87,8 @@
 #define ADC_IND_EXT2			7
 #define ADC_IND_EXT3			10
 #define ADC_IND_TEMP_MOS		8
-#define ADC_IND_TEMP_MOS_2		15
-#define ADC_IND_TEMP_MOS_3		16
+//#define ADC_IND_TEMP_MOS_2		15
+//#define ADC_IND_TEMP_MOS_3		16
 #define ADC_IND_TEMP_MOTOR		9
 #define ADC_IND_VREFINT			12
 
@@ -96,19 +96,21 @@
 
 // Component parameters (can be overridden)
 #ifndef V_REG
-#define V_REG					3.44
+#define V_REG					3.3
 #endif
 #ifndef VIN_R1
-#define VIN_R1					150000.0
+#define VIN_R1					59000.0
 #endif
 #ifndef VIN_R2
-#define VIN_R2					4700.0
+//#define VIN_R2					1000.0
+#define VIN_R2					2200.0
 #endif
 #ifndef CURRENT_AMP_GAIN
 #define CURRENT_AMP_GAIN		20.0
 #endif
 #ifndef CURRENT_SHUNT_RES
-#define CURRENT_SHUNT_RES		(0.0005 / 3.0)
+//#define CURRENT_SHUNT_RES		(0.0005 / 3.0)
+#define CURRENT_SHUNT_RES		0.0003
 #endif
 
 // Input voltage
@@ -116,14 +118,10 @@
 
 // NTC Termistors
 #define NTC_RES(adc_val)		((4095.0 * 10000.0) / adc_val - 10000.0)
-#define NTC_TEMP(adc_ind)		hw100_250_get_temp()
+#define NTC_TEMP(adc_ind)		(1.0 / ((logf(NTC_RES(ADC_Value[adc_ind]) / 10000.0) / 3380.0) + (1.0 / 298.15)) - 273.15)
 
 #define NTC_RES_MOTOR(adc_val)	(10000.0 / ((4095.0 / (float)adc_val) - 1.0)) // Motor temp sensor on low side
 #define NTC_TEMP_MOTOR(beta)	(1.0 / ((logf(NTC_RES_MOTOR(ADC_Value[ADC_IND_TEMP_MOTOR]) / 10000.0) / beta) + (1.0 / 298.15)) - 273.15)
-
-#define NTC_TEMP_MOS1()			(1.0 / ((logf(NTC_RES(ADC_Value[ADC_IND_TEMP_MOS]) / 10000.0) / 3380.0) + (1.0 / 298.15)) - 273.15)
-#define NTC_TEMP_MOS2()			(1.0 / ((logf(NTC_RES(ADC_Value[ADC_IND_TEMP_MOS_2]) / 10000.0) / 3380.0) + (1.0 / 298.15)) - 273.15)
-#define NTC_TEMP_MOS3()			(1.0 / ((logf(NTC_RES(ADC_Value[ADC_IND_TEMP_MOS_3]) / 10000.0) / 3380.0) + (1.0 / 298.15)) - 273.15)
 
 // Voltage on ADC channel
 #define ADC_VOLTS(ch)			((float)ADC_Value[ch] / 4096.0 * V_REG)
@@ -199,11 +197,13 @@
 #define HW_SPI_PORT_MISO		GPIOA
 #define HW_SPI_PIN_MISO			6
 
+
 #define BMI160_SDA_GPIO			GPIOB
 #define BMI160_SDA_PIN			4
 #define BMI160_SCL_GPIO			GPIOB
 #define BMI160_SCL_PIN			12
 #define IMU_FLIP
+
 
 // NRF SWD
 #define NRF5x_SWDIO_GPIO		GPIOA
@@ -230,7 +230,7 @@
 #define MCCONF_L_MIN_VOLTAGE			12.0		// Minimum input voltage
 #endif
 #ifndef MCCONF_L_MAX_VOLTAGE
-#define MCCONF_L_MAX_VOLTAGE			96.0	// Maximum input voltage
+#define MCCONF_L_MAX_VOLTAGE			106.0	// Maximum input voltage
 #endif
 #ifndef MCCONF_DEFAULT_MOTOR_TYPE
 #define MCCONF_DEFAULT_MOTOR_TYPE		MOTOR_TYPE_FOC
@@ -245,23 +245,49 @@
 #define MCCONF_FOC_SAMPLE_V0_V7			false	// Run control loop in both v0 and v7 (requires phase shunts)
 #endif
 #ifndef MCCONF_L_IN_CURRENT_MAX
-#define MCCONF_L_IN_CURRENT_MAX			250.0	// Input current limit in Amperes (Upper)
+#define MCCONF_L_IN_CURRENT_MAX			150.0	// Input current limit in Amperes (Upper)
 #endif
 #ifndef MCCONF_L_IN_CURRENT_MIN
-#define MCCONF_L_IN_CURRENT_MIN			-200.0	// Input current limit in Amperes (Lower)
+#define MCCONF_L_IN_CURRENT_MIN			-100.0	// Input current limit in Amperes (Lower)
+#endif
+
+#ifndef MCCONF_FOC_CURRENT_SAMPLE_MODE
+#define MCCONF_FOC_CURRENT_SAMPLE_MODE	FOC_CURRENT_SAMPLE_MODE_ALL_SENSORS
+#endif
+#ifndef MCCONF_FOC_OBSERVER_TYPE
+#define MCCONF_FOC_OBSERVER_TYPE		FOC_OBSERVER_ORTEGA_ORIGINAL // Position observer type for FOC
+#endif
+#ifndef MCCONF_BMS_TYPE
+#define MCCONF_BMS_TYPE					BMS_TYPE_NONE
+#endif
+#ifndef MCCONF_M_MOTOR_TEMP_SENS_TYPE
+#define MCCONF_M_MOTOR_TEMP_SENS_TYPE	TEMP_SENSOR_DISABLED // Motor temperature sensor type
+#endif
+#ifndef MCCONF_P_PID_ANG_DIV
+#define MCCONF_P_PID_ANG_DIV			24.0		// Divide angle by this value
+#endif
+#ifndef MCCONF_S_PID_RAMP_ERPMS_S
+#define MCCONF_S_PID_RAMP_ERPMS_S		10000.0	// Speed input ramping, in ERPM/s
+#endif
+
+#ifndef APPCONF_IMU_TYPE
+#define APPCONF_IMU_TYPE					IMU_TYPE_OFF
+#endif
+#ifndef APPCONF_IMU_USE_MAGNETOMETER
+#define APPCONF_IMU_USE_MAGNETOMETER		false
 #endif
 
 // Setting limits
 #define HW_LIM_CURRENT			-300.0, 300.0
-#define HW_LIM_CURRENT_IN		-300.0, 300.0
+#define HW_LIM_CURRENT_IN		-100.0, 150.0
 #define HW_LIM_CURRENT_ABS		0.0, 420.0
-#define HW_LIM_VIN				11.0, 97.0
+#define HW_LIM_VIN				11.0, 107.0
 #define HW_LIM_ERPM				-200e3, 200e3
 #define HW_LIM_DUTY_MIN			0.0, 0.1
-#define HW_LIM_DUTY_MAX			0.0, 0.99
+#define HW_LIM_DUTY_MAX			0.0, 0.95
 #define HW_LIM_TEMP_FET			-40.0, 110.0
 
 // HW-specific functions
-float hw100_250_get_temp(void);
+//float hw100_250_get_temp(void);
 
 #endif /* HW_100_250_H_ */

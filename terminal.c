@@ -1130,6 +1130,42 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 		commands_printf("MC CFG crc: 0x%04X (stored)  0x%04X (recalc)", mc_crc0, mc_crc1);
 		commands_printf("APP CFG crc: 0x%04X (stored)  0x%04X (recalc)", app_crc0, app_crc1);
 		commands_printf("Discrepancy is expected due to run-time recalculation of config params.\n");
+	} else if (strcmp(argv[0], "engine_start") == 0) {
+		mc_interface_engine_start();
+		commands_printf("Engine start requested");
+	} else if (strcmp(argv[0], "engine_stop") == 0) {
+		mc_interface_engine_stop();
+		commands_printf("Engine start stopped");
+	} else if (strcmp(argv[0], "engine_status") == 0) {
+		engine_start_status_t status;
+		if (mcpwm_foc_engine_start_get_status(&status)) {
+			static const char *stop_reason_names[] = {
+				"NONE", "USER", "TIMEOUT", "UNDERVOLTAGE", "FAULT",
+				"MAX_RETRY", "MAX_PULSES", "STALL", "OVERCURRENT"
+			};
+			static const char *engine_state_names[] = {
+				"IDLE", "ALIGN", "PULL", "LOAD_DETECT", "PULSE",
+				"GAP", "BACKOFF", "ACCEL", "BLEND", "RUN", "FAULT", "PRELOAD"
+			};
+			const char *stop_reason_name = "UNKNOWN";
+			const char *engine_state_name = "UNKNOWN";
+			if (status.last_stop_reason >= 0 &&
+					status.last_stop_reason < (int)(sizeof(stop_reason_names) / sizeof(stop_reason_names[0]))) {
+				stop_reason_name = stop_reason_names[status.last_stop_reason];
+			}
+			if (status.state >= 0 &&
+					status.state < (int)(sizeof(engine_state_names) / sizeof(engine_state_names[0]))) {
+				engine_state_name = engine_state_names[status.state];
+			}
+
+			commands_printf("Engine start active      : %s", status.active ? "true" : "false");
+			commands_printf("Engine start state       : %s (%d)", engine_state_name, status.state);
+			commands_printf("Engine event state       : %d", status.event_state);
+			commands_printf("Engine event confidence  : %.3f", (double)status.event_confidence);
+			commands_printf("Engine fault/stop reason : %s (%d)", stop_reason_name, status.last_stop_reason);
+		} else {
+			commands_printf("Engine start status unavailable");
+		}
 	} else if (strcmp(argv[0], "drv_reset_faults") == 0) {
 		HW_RESET_DRV_FAULTS();
 	} else if (strcmp(argv[0], "update_pid_pos_offset") == 0) {
@@ -1270,6 +1306,12 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 		commands_printf("crc");
 		commands_printf("  Print CRC values.");
 
+		commands_printf("engine_start");
+		commands_printf("  Start fixed-parameter FOC engine-start state machine.");
+		commands_printf("engine_stop");
+		commands_printf("  Stop engine-start output and reset its state machine.");
+		commands_printf("engine_status");
+		commands_printf("  Print whether engine-start is active.");
 		commands_printf("drv_reset_faults");
 		commands_printf("  Reset gate driver faults (if possible).");
 

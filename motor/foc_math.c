@@ -18,6 +18,7 @@
  */
 
 #include "foc_math.h"
+#include "hw.h"
 #include "utils_math.h"
 #include <math.h>
 

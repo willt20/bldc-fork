@@ -1877,6 +1877,121 @@ static lbm_value ext_app_pas_get_rpm(lbm_value *args, lbm_uint argn) {
 
 // Motor set commands
 
+
+// Engine start debug commands
+static char *engine_start_param_names[ENGINE_START_PARAM_NUM] = {
+	"align-current",
+	"pull-current",
+	"boost-current-1",
+	"boost-current-2",
+	"boost-current-3",
+	"accel-current",
+	"min-vin",
+	"max-start-time-ms",
+	"event-confidence-threshold",
+	"pull-event-timeout-ms",
+	"pulse-event-timeout-ms",
+	"preload-enable",
+	"preload-current",
+	"preload-time-ms"
+};
+static lbm_uint engine_start_param_syms[ENGINE_START_PARAM_NUM];
+
+static bool engine_start_param_from_lbm(lbm_value arg, engine_start_param_id_t *param) {
+	if (lbm_is_number(arg)) {
+		int id = lbm_dec_as_i32(arg);
+		if (id >= 0 && id < ENGINE_START_PARAM_NUM) {
+			*param = (engine_start_param_id_t)id;
+			return true;
+		}
+		return false;
+	}
+
+	if (lbm_is_symbol(arg)) {
+		lbm_uint sym = lbm_dec_sym(arg);
+		for (int i = 0;i < ENGINE_START_PARAM_NUM;i++) {
+			if (engine_start_param_syms[i] == 0) {
+				lbm_add_symbol_const(engine_start_param_names[i], &engine_start_param_syms[i]);
+			}
+
+			if (sym == engine_start_param_syms[i]) {
+				*param = (engine_start_param_id_t)i;
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+static lbm_value ext_engine_start(lbm_value *args, lbm_uint argn) {
+	(void)args;
+	if (argn != 0) {
+		return ENC_SYM_EERROR;
+	}
+
+	timeout_reset();
+	mc_interface_engine_start();
+	return ENC_SYM_TRUE;
+}
+
+static lbm_value ext_engine_stop(lbm_value *args, lbm_uint argn) {
+	(void)args;
+	if (argn != 0) {
+		return ENC_SYM_EERROR;
+	}
+
+	mc_interface_engine_stop();
+	return ENC_SYM_TRUE;
+}
+
+static lbm_value ext_engine_start_status(lbm_value *args, lbm_uint argn) {
+	(void)args;
+	if (argn != 0) {
+		return ENC_SYM_EERROR;
+	}
+
+	engine_start_status_t status;
+	if (!mcpwm_foc_engine_start_get_status(&status)) {
+		return ENC_SYM_NIL;
+	}
+
+	lbm_value res = ENC_SYM_NIL;
+	res = lbm_cons(status.active ? ENC_SYM_TRUE : ENC_SYM_NIL, res);
+	res = lbm_cons(lbm_enc_i(status.last_stop_reason), res);
+	res = lbm_cons(lbm_enc_float(status.event_confidence), res);
+	res = lbm_cons(lbm_enc_i(status.event_state), res);
+	res = lbm_cons(lbm_enc_i(status.state), res);
+	return res;
+}
+
+static lbm_value ext_engine_start_param_set(lbm_value *args, lbm_uint argn) {
+	if (argn != 2 || !lbm_is_number(args[1])) {
+		return ENC_SYM_EERROR;
+	}
+
+	engine_start_param_id_t param;
+	if (!engine_start_param_from_lbm(args[0], &param)) {
+		return ENC_SYM_EERROR;
+	}
+
+	return mcpwm_foc_engine_start_set_param(param, lbm_dec_as_float(args[1])) ? ENC_SYM_TRUE : ENC_SYM_NIL;
+}
+
+static lbm_value ext_engine_start_param_get(lbm_value *args, lbm_uint argn) {
+	if (argn != 1) {
+		return ENC_SYM_EERROR;
+	}
+
+	engine_start_param_id_t param;
+	if (!engine_start_param_from_lbm(args[0], &param)) {
+		return ENC_SYM_EERROR;
+	}
+
+	float value = 0.0f;
+	return mcpwm_foc_engine_start_get_param(param, &value) ? lbm_enc_float(value) : ENC_SYM_NIL;
+}
+
 static lbm_value ext_set_current(lbm_value *args, lbm_uint argn) {
 	LBM_CHECK_NUMBER_ALL();
 	timeout_reset();
@@ -6465,6 +6580,12 @@ void lispif_load_vesc_extensions(bool main_found) {
 		lbm_add_extension("app-pas-get-rpm", ext_app_pas_get_rpm);
 
 		// Motor set commands
+		lbm_add_extension("engine-start", ext_engine_start);
+		lbm_add_extension("engine-stop", ext_engine_stop);
+		lbm_add_extension("engine-status", ext_engine_start_status);
+		lbm_add_extension("engine-param-set", ext_engine_start_param_set);
+		lbm_add_extension("engine-param-get", ext_engine_start_param_get);
+
 		lbm_add_extension("set-current", ext_set_current);
 		lbm_add_extension("set-current-rel", ext_set_current_rel);
 		lbm_add_extension("set-duty", ext_set_duty);
