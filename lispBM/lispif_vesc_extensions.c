@@ -1891,7 +1891,9 @@ static char *engine_start_param_names[ENGINE_START_PARAM_NUM] = {
 	"event-confidence-threshold",
 	"pull-event-timeout-ms",
 	"pulse-event-timeout-ms",
-	"preload-enable"
+	"preload-enable",
+	"preload-current",
+	"preload-time-ms"
 };
 static lbm_uint engine_start_param_syms[ENGINE_START_PARAM_NUM];
 

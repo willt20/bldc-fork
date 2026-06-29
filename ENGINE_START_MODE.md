@@ -4,7 +4,7 @@ This document records the final Engine Start architecture used in this fork.
 
 ## Architecture
 
-Engine Start is now a minimal event-driven controller. It does not use the old pulse/gap/prewarn timing system, stall-based PULL decisions, reverse preload execution, or the V3/V4/V5/V6 learning and policy layers for control.
+Engine Start is now a minimal event-driven controller. It does not use the old pulse/gap/prewarn timing system, stall-based PULL decisions, or the V3/V4/V5/V6 learning and policy layers for control. It can optionally run a short reverse preload before ALIGN.
 
 The active layers are:
 
@@ -22,6 +22,7 @@ The active layers are:
    * separate watchdogs through `pull-event-timeout-ms` and `pulse-event-timeout-ms`
 
 3. **State Machine Execution**
+   * optional `PRELOAD` before alignment
    * `ALIGN`
    * `PULL` as event wait mode
    * `LOAD_DETECT` compatibility routing
@@ -35,7 +36,7 @@ The active layers are:
 
 ## State number map
 
-The state enum was renumbered when the old preload/recover/retry states were removed. Use this table when reading `(engine-status)` or `engine_status` output:
+Use this table when reading `(engine-status)` or `engine_status` output. `PRELOAD` is assigned number 11 so the existing 0..10 state numbers remain unchanged:
 
 | Number | State |
 |---:|---|
@@ -50,6 +51,7 @@ The state enum was renumbered when the old preload/recover/retry states were rem
 | 8 | `BLEND` |
 | 9 | `RUN` |
 | 10 | `FAULT` |
+| 11 | `PRELOAD` |
 
 ## PULL event wait mode
 
@@ -77,11 +79,16 @@ Only the minimal runtime parameter set is exposed to Lisp/terminal parameter API
 | `event-confidence-threshold` | Default `0.65`; event confidence needed to accept an event. |
 | `pull-event-timeout-ms` | Default `500`; PULL/LOAD_DETECT no-event watchdog. |
 | `pulse-event-timeout-ms` | Default `15`; PULSE/GAP safety watchdog. |
-| `preload-enable` | Kept for interface compatibility only. Reverse preload control logic is disabled. |
+| `preload-enable` | Enable optional reverse preload before ALIGN. Default `1.0`; set `0.0` to skip. |
+| `preload-current` | Reverse preload current. Default `-12A`; valid `-20A..20A`. |
+| `preload-time-ms` | Reverse preload duration. Default `500ms`; set `0` or disable preload to skip. |
 
 ## Lisp usage
 
 ```lisp
+(engine-param-set 'preload-enable 1.0)
+(engine-param-set 'preload-current -12.0)
+(engine-param-set 'preload-time-ms 500.0)
 (engine-param-set 'align-current 5.0)
 (engine-param-set 'pull-current 12.0)
 (engine-param-set 'boost-current-1 20.0)
@@ -110,13 +117,12 @@ The following old systems are no longer part of control:
 * `engine-period-ms`
 * stall-based PULL backoff logic
 * pull stall ignore window
-* reverse preload execution
 * V3/V4 learning control
 * V5 policy selection
 * V6 knowledge preload/save
 * timing mode and timing clamp status output
 
-They are intentionally not exposed in `(engine-status)` or Lisp parameter names.
+They are intentionally not exposed in `(engine-status)` or Lisp parameter names. Reverse preload is not part of those removed systems; it is an optional pre-ALIGN positioning step controlled by `preload-enable`, `preload-current`, and `preload-time-ms`.
 
 ## Non-goals
 

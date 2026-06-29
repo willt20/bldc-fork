@@ -74,7 +74,9 @@
 #define ENGINE_LOAD_DELTA_MAX      60.0f
 #define ENGINE_STATE_DEBOUNCE_MS   10
 #define ENGINE_DIRECTION            1.0f
-#define ENGINE_PRELOAD_ENABLE        0.0f
+#define ENGINE_PRELOAD_ENABLE        1.0f
+#define ENGINE_PRELOAD_CURRENT       -12.0f
+#define ENGINE_PRELOAD_TIME_MS       500.0f
 
 #if ENGINE_START_ENABLE
 typedef enum {
@@ -88,7 +90,8 @@ typedef enum {
 	ENGINE_START_ACCEL,
 	ENGINE_START_BLEND,
 	ENGINE_START_RUN,
-	ENGINE_START_FAULT
+	ENGINE_START_FAULT,
+	ENGINE_START_PRELOAD = 11
 } engine_start_state_t;
 
 typedef enum {
@@ -118,6 +121,8 @@ typedef struct {
 	float direction;
 	float min_vin;
 	float preload_enable;
+	float preload_current;
+	float preload_time_ms;
 	float event_confidence_threshold;
 	float pull_event_timeout_ms;
 	float pulse_event_timeout_ms;
@@ -899,6 +904,8 @@ static void engine_start_params_load_defaults(void) {
 	engine_start_params.direction = ENGINE_DIRECTION;
 	engine_start_params.min_vin = ENGINE_MIN_VIN;
 	engine_start_params.preload_enable = ENGINE_PRELOAD_ENABLE;
+	engine_start_params.preload_current = ENGINE_PRELOAD_CURRENT;
+	engine_start_params.preload_time_ms = ENGINE_PRELOAD_TIME_MS;
 	engine_start_params.event_confidence_threshold = ENGINE_EVENT_CONFIDENCE_THRESHOLD;
 	engine_start_params.pull_event_timeout_ms = ENGINE_PULL_EVENT_TIMEOUT_MS;
 	engine_start_params.pulse_event_timeout_ms = ENGINE_PULSE_EVENT_TIMEOUT_MS;
@@ -919,6 +926,8 @@ static float *engine_start_param_ptr(engine_start_param_id_t param) {
 	case ENGINE_START_PARAM_PULL_EVENT_TIMEOUT_MS: return &engine_start_params.pull_event_timeout_ms;
 	case ENGINE_START_PARAM_PULSE_EVENT_TIMEOUT_MS: return &engine_start_params.pulse_event_timeout_ms;
 	case ENGINE_START_PARAM_PRELOAD_ENABLE: return &engine_start_params.preload_enable;
+	case ENGINE_START_PARAM_PRELOAD_CURRENT: return &engine_start_params.preload_current;
+	case ENGINE_START_PARAM_PRELOAD_TIME_MS: return &engine_start_params.preload_time_ms;
 	default: return 0;
 	}
 }
@@ -931,6 +940,10 @@ static bool engine_start_param_valid(engine_start_param_id_t param, float value)
 	switch (param) {
 	case ENGINE_START_PARAM_PRELOAD_ENABLE:
 		return value >= 0.0f && value <= 1.0f;
+	case ENGINE_START_PARAM_PRELOAD_CURRENT:
+		return value >= -20.0f && value <= 20.0f;
+	case ENGINE_START_PARAM_PRELOAD_TIME_MS:
+		return value >= 0.0f && value <= 2000.0f;
 	case ENGINE_START_PARAM_EVENT_CONFIDENCE_THRESHOLD:
 		return value >= 0.0f && value <= 1.0f;
 	case ENGINE_START_PARAM_MAX_START_TIME_MS:
@@ -1038,7 +1051,8 @@ void mcpwm_foc_engine_start(void) {
 
 	engine_start_reset();
 	engine_start_active = true;
-	engine_start_state = ENGINE_START_ALIGN;
+	engine_start_state = (engine_start_params.preload_enable >= 0.5f && engine_start_params.preload_time_ms > 0.0f) ?
+			ENGINE_START_PRELOAD : ENGINE_START_ALIGN;
 	engine_start_timer = chVTGetSystemTimeX();
 	engine_start_global_timer = engine_start_timer;
 	engine_start_openloop_erpm = engine_start_params.pull_start_erpm;
@@ -1221,6 +1235,15 @@ static void engine_start_update(float dt) {
 	}
 
 	switch (engine_start_state) {
+	case ENGINE_START_PRELOAD:
+		// Optional reverse preload before fixed electrical angle alignment.
+		engine_start_set_openloop_current(engine_start_params.preload_current, engine_start_params.pull_start_erpm, dt);
+		if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.preload_time_ms) {
+			engine_start_stop_output();
+			engine_start_enter(ENGINE_START_ALIGN);
+		}
+		break;
+
 	case ENGINE_START_ALIGN:
 		// Fixed electrical angle alignment before event-driven PULL.
 		mcpwm_foc_set_openloop_phase(engine_start_params.align_current, 0.0f);

@@ -1145,7 +1145,7 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 			};
 			static const char *engine_state_names[] = {
 				"IDLE", "ALIGN", "PULL", "LOAD_DETECT", "PULSE",
-				"GAP", "BACKOFF", "ACCEL", "BLEND", "RUN", "FAULT"
+				"GAP", "BACKOFF", "ACCEL", "BLEND", "RUN", "FAULT", "PRELOAD"
 			};
 			const char *stop_reason_name = "UNKNOWN";
 			const char *engine_state_name = "UNKNOWN";

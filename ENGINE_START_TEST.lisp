@@ -13,8 +13,10 @@
   (engine-param-set 'event-confidence-threshold 0.65)
   (engine-param-set 'pull-event-timeout-ms 500.0)
   (engine-param-set 'pulse-event-timeout-ms 15.0)
-  ; Interface compatibility only. Reverse preload logic is disabled in ES-FINAL.
-  (engine-param-set 'preload-enable 0.0))
+  ; Optional reverse preload before ALIGN. Disable by setting preload-enable to 0.0.
+  (engine-param-set 'preload-enable 1.0)
+  (engine-param-set 'preload-current -12.0)
+  (engine-param-set 'preload-time-ms 500.0))
 
 (defun es-print-param (name)
   (print name)
@@ -33,7 +35,9 @@
   (es-print-param 'event-confidence-threshold)
   (es-print-param 'pull-event-timeout-ms)
   (es-print-param 'pulse-event-timeout-ms)
-  (es-print-param 'preload-enable))
+  (es-print-param 'preload-enable)
+  (es-print-param 'preload-current)
+  (es-print-param 'preload-time-ms))
 
 (defun es-monitor (n delay-ms)
   (if (> n 0)
@@ -41,7 +45,8 @@
         (print "status=")
         ; Returns (state event-state event-confidence fault-reason active)
         ; State map: 0 IDLE, 1 ALIGN, 2 PULL, 3 LOAD_DETECT,
-        ; 4 PULSE, 5 GAP, 6 BACKOFF, 7 ACCEL, 8 BLEND, 9 RUN, 10 FAULT.
+        ; 4 PULSE, 5 GAP, 6 BACKOFF, 7 ACCEL, 8 BLEND, 9 RUN,
+        ; 10 FAULT, 11 PRELOAD.
         (print (engine-status))
         (sleep (/ delay-ms 1000.0))
         (es-monitor (- n 1) delay-ms))))
