@@ -25,57 +25,18 @@
 #include "foc_math.h"
 #include <stdbool.h>
 
-#define ENGINE_TIMING_CLAMP_PULSE   (1 << 0)
-#define ENGINE_TIMING_CLAMP_GAP     (1 << 1)
-#define ENGINE_TIMING_CLAMP_PREWARN (1 << 2)
-
 typedef enum {
 	ENGINE_START_PARAM_ALIGN_CURRENT = 0,
-	ENGINE_START_PARAM_ALIGN_TIME_MS,
 	ENGINE_START_PARAM_PULL_CURRENT,
-	ENGINE_START_PARAM_PULL_START_ERPM,
-	ENGINE_START_PARAM_PULL_TARGET_ERPM,
-	ENGINE_START_PARAM_PULL_RAMP_ERPM_S,
-	ENGINE_START_PARAM_BOOST_CURRENT,
-	ENGINE_START_PARAM_BOOST_TIME_MS,
 	ENGINE_START_PARAM_BOOST_CURRENT_1,
 	ENGINE_START_PARAM_BOOST_CURRENT_2,
 	ENGINE_START_PARAM_BOOST_CURRENT_3,
-	ENGINE_START_PARAM_BOOST_PULSE_MS,
-	ENGINE_START_PARAM_BOOST_GAP_MS,
-	ENGINE_START_PARAM_BOOST_MAX_PULSES,
-	ENGINE_START_PARAM_BOOST_SUCCESS_ERPM,
 	ENGINE_START_PARAM_ACCEL_CURRENT,
-	ENGINE_START_PARAM_ACCEL_TARGET_ERPM,
-	ENGINE_START_PARAM_ACCEL_RAMP_ERPM_S,
-	ENGINE_START_PARAM_OBS_MIN_ERPM,
-	ENGINE_START_PARAM_BLEND_TIME_MS,
-	ENGINE_START_PARAM_RETRY_DELAY_MS,
-	ENGINE_START_PARAM_MAX_RETRY,
-	ENGINE_START_PARAM_MAX_START_TIME_MS,
-	ENGINE_START_PARAM_STALL_ERPM,
-	ENGINE_START_PARAM_STALL_CURRENT,
-	ENGINE_START_PARAM_STALL_DUTY,
-	ENGINE_START_PARAM_COMPRESSION_TIME_MS,
-	ENGINE_START_PARAM_OBS_STABLE_TIME_MS,
-	ENGINE_START_PARAM_DIRECTION,
-	ENGINE_START_PARAM_STALL_CONFIRM_MS,
-	ENGINE_START_PARAM_MAX_TOTAL_PULSES,
 	ENGINE_START_PARAM_MIN_VIN,
-	ENGINE_START_PARAM_BACKOFF_MS,
-	ENGINE_START_PARAM_BACKOFF_REVERSE_ENABLE,
-	ENGINE_START_PARAM_BACKOFF_CURRENT,
-	ENGINE_START_PARAM_BACKOFF_ERPM,
-	ENGINE_START_PARAM_ENGINE_PERIOD_MS,
-	ENGINE_START_PARAM_PREWARN_HOLD_MS,
-	ENGINE_START_PARAM_PULSE_RATIO,
-	ENGINE_START_PARAM_PREWARN_RATIO,
-	ENGINE_START_PARAM_GAP_RATIO,
+	ENGINE_START_PARAM_MAX_START_TIME_MS,
+	ENGINE_START_PARAM_EVENT_CONFIDENCE_THRESHOLD,
+	ENGINE_START_PARAM_EVENT_TIMEOUT_MS,
 	ENGINE_START_PARAM_PRELOAD_ENABLE,
-	ENGINE_START_PARAM_PRELOAD_CURRENT,
-	ENGINE_START_PARAM_PRELOAD_TIME_MS,
-	ENGINE_START_PARAM_PRELOAD_SETTLE_MS,
-	ENGINE_START_PARAM_PULL_STALL_IGNORE_MS,
 	ENGINE_START_PARAM_NUM
 } engine_start_param_id_t;
 
@@ -93,41 +54,10 @@ typedef enum {
 
 typedef struct {
 	int state;
-	bool active;
-	int retry_count;
-	int boost_pulse_count;
-	int total_pulse_count;
-	float openloop_erpm;
-	float openloop_phase;
-	float blend;
-	float iq_target;
-	float erpm_abs_filt;
-	float current_abs_filt;
-	float duty_abs_filt;
-	float accel_filt;
-	float load_score;
-	float load_delta;
-	int compression_ms;
-	int stall_ms;
-	int obs_stable_ms;
+	int event_state;
+	float event_confidence;
 	int last_stop_reason;
-	float stability_score;
-	int learning_state;
-	int learning_window_count;
-	int consecutive_success;
-	int strategy;
-	int knowledge_count;
-	float avg_start_time_ms;
-	float v6_confidence;
-	float learning_gain;
-	int policy_mode;
-	int timing_mode;
-	uint8_t timing_clamp_status;
-	int preload_enable;
-	bool preload_active;
-	int preload_elapsed_ms;
-	int pull_elapsed_ms;
-	bool pull_stall_ignored;
+	bool active;
 } engine_start_status_t;
 
 // Functions

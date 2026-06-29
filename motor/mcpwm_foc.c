@@ -80,6 +80,8 @@
 #define ENGINE_MAX_START_TIME_MS   5000
 #define ENGINE_MAX_TOTAL_PULSES    9
 #define ENGINE_MIN_VIN             24.0f
+#define ENGINE_EVENT_CONFIDENCE_THRESHOLD 0.65f
+#define ENGINE_EVENT_TIMEOUT_MS    800.0f
 #define ENGINE_STALL_ERPM          300.0f
 #define ENGINE_STALL_CURRENT       100.0f
 #define ENGINE_STALL_DUTY          0.12f
@@ -155,25 +157,24 @@
 #if ENGINE_START_ENABLE
 typedef enum {
 	ENGINE_START_IDLE = 0,
-	ENGINE_START_PRELOAD,
-	ENGINE_START_PRELOAD_SETTLE,
 	ENGINE_START_ALIGN,
 	ENGINE_START_PULL,
 	ENGINE_START_LOAD_DETECT,
 	ENGINE_START_PULSE,
 	ENGINE_START_GAP,
 	ENGINE_START_BACKOFF,
-	ENGINE_START_RECOVER,
 	ENGINE_START_ACCEL,
 	ENGINE_START_BLEND,
 	ENGINE_START_RUN,
-	ENGINE_START_RETRY,
 	ENGINE_START_FAULT
 } engine_start_state_t;
 
-#define ENGINE_TIMING_MODE_PULSE_MANUAL   (1 << 0)
-#define ENGINE_TIMING_MODE_GAP_MANUAL     (1 << 1)
-#define ENGINE_TIMING_MODE_PREWARN_MANUAL (1 << 2)
+typedef enum {
+	ENGINE_EVENT_NONE = 0,
+	ENGINE_EVENT_ENTER_COMPRESSION,
+	ENGINE_EVENT_PEAK_REACHED,
+	ENGINE_EVENT_RELEASE
+} engine_start_event_t;
 
 typedef struct {
 	float align_current;
@@ -221,6 +222,8 @@ typedef struct {
 	float preload_time_ms;
 	float preload_settle_ms;
 	float pull_stall_ignore_ms;
+	float event_confidence_threshold;
+	float event_timeout_ms;
 } engine_start_params_t;
 
 typedef enum {
@@ -347,6 +350,10 @@ static bool engine_start_manual_boost_gap_ms = false;
 static bool engine_start_manual_prewarn_hold_ms = false;
 static uint8_t engine_start_timing_clamp_status = 0;
 static bool engine_start_pull_stall_ignored = false;
+static engine_start_event_t engine_start_event_state = ENGINE_EVENT_NONE;
+static engine_start_event_t engine_start_event_candidate = ENGINE_EVENT_NONE;
+static int engine_start_event_debounce_count = 0;
+static float engine_start_event_confidence = 0.0f;
 static engine_start_params_t engine_start_params = {
 	.align_current = ENGINE_ALIGN_CURRENT,
 	.align_time_ms = ENGINE_ALIGN_TIME_MS,
@@ -392,7 +399,9 @@ static engine_start_params_t engine_start_params = {
 	.preload_current = ENGINE_PRELOAD_CURRENT,
 	.preload_time_ms = ENGINE_PRELOAD_TIME_MS,
 	.preload_settle_ms = ENGINE_PRELOAD_SETTLE_MS,
-	.pull_stall_ignore_ms = ENGINE_PULL_STALL_IGNORE_MS
+	.pull_stall_ignore_ms = ENGINE_PULL_STALL_IGNORE_MS,
+	.event_confidence_threshold = ENGINE_EVENT_CONFIDENCE_THRESHOLD,
+	.event_timeout_ms = ENGINE_EVENT_TIMEOUT_MS
 };
 #endif
 
@@ -415,6 +424,7 @@ static bool engine_start_low_load(void);
 static bool engine_start_erpm_reached(float target_erpm);
 static bool engine_start_observer_stable(void);
 static void engine_start_update_filters(float dt);
+static void engine_start_update_event(void);
 static void engine_start_update_high_load_latch(float dt, bool compression);
 static void engine_start_set_openloop_current(float iq, float erpm, float dt);
 static void engine_start_stop_output(void);
@@ -1101,41 +1111,9 @@ static int engine_start_elapsed_ms(systime_t t) {
 }
 
 static void engine_start_update_timing(void) {
-	float boost_pulse_ms = engine_start_params.engine_period_ms * engine_start_params.pulse_ratio;
-	float prewarn_hold_ms = engine_start_params.engine_period_ms * engine_start_params.prewarn_ratio;
-	float boost_gap_ms = engine_start_params.engine_period_ms * engine_start_params.gap_ratio;
-	float boost_pulse_raw_ms = boost_pulse_ms;
-	float prewarn_raw_ms = prewarn_hold_ms;
-	float boost_gap_raw_ms = boost_gap_ms;
-
-	utils_truncate_number(&boost_pulse_ms, ENGINE_BOOST_PULSE_MIN_MS, ENGINE_BOOST_PULSE_MAX_MS);
-	utils_truncate_number(&prewarn_hold_ms, ENGINE_PREWARN_MIN_MS, ENGINE_PREWARN_MAX_MS);
-	utils_truncate_number(&boost_gap_ms, ENGINE_BOOST_GAP_MIN_MS, ENGINE_BOOST_GAP_MAX_MS);
-
-	engine_start_timing_clamp_status = 0;
-	if (boost_pulse_ms != boost_pulse_raw_ms) {
-		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_PULSE;
-	}
-	if (prewarn_hold_ms != prewarn_raw_ms) {
-		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_PREWARN;
-	}
-	if (boost_gap_ms != boost_gap_raw_ms) {
-		engine_start_timing_clamp_status |= ENGINE_TIMING_CLAMP_GAP;
-	}
-
-	if (!engine_start_manual_boost_pulse_ms) {
-		engine_start_params.boost_time_ms = boost_pulse_ms;
-		engine_start_params.boost_pulse_ms = boost_pulse_ms;
-	}
-
-	if (!engine_start_manual_prewarn_hold_ms) {
-		engine_start_load_prewarn_hold_ms = prewarn_hold_ms;
-	}
-
-	if (!engine_start_manual_boost_gap_ms) {
-		engine_start_params.boost_gap_ms = boost_gap_ms;
-	}
+	// Timing pulse/gap/prewarn decisions are intentionally disabled in ES-FINAL.
 }
+
 
 static void engine_start_params_load_defaults(void) {
 	engine_start_manual_boost_pulse_ms = false;
@@ -1186,6 +1164,8 @@ static void engine_start_params_load_defaults(void) {
 	engine_start_params.preload_time_ms = ENGINE_PRELOAD_TIME_MS;
 	engine_start_params.preload_settle_ms = ENGINE_PRELOAD_SETTLE_MS;
 	engine_start_params.pull_stall_ignore_ms = ENGINE_PULL_STALL_IGNORE_MS;
+	engine_start_params.event_confidence_threshold = ENGINE_EVENT_CONFIDENCE_THRESHOLD;
+	engine_start_params.event_timeout_ms = ENGINE_EVENT_TIMEOUT_MS;
 	engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
 	engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
 	engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
@@ -1195,51 +1175,16 @@ static void engine_start_params_load_defaults(void) {
 static float *engine_start_param_ptr(engine_start_param_id_t param) {
 	switch (param) {
 	case ENGINE_START_PARAM_ALIGN_CURRENT: return &engine_start_params.align_current;
-	case ENGINE_START_PARAM_ALIGN_TIME_MS: return &engine_start_params.align_time_ms;
 	case ENGINE_START_PARAM_PULL_CURRENT: return &engine_start_params.pull_current;
-	case ENGINE_START_PARAM_PULL_START_ERPM: return &engine_start_params.pull_start_erpm;
-	case ENGINE_START_PARAM_PULL_TARGET_ERPM: return &engine_start_params.pull_target_erpm;
-	case ENGINE_START_PARAM_PULL_RAMP_ERPM_S: return &engine_start_params.pull_ramp_erpm_s;
-	case ENGINE_START_PARAM_BOOST_CURRENT: return &engine_start_params.boost_current;
-	case ENGINE_START_PARAM_BOOST_TIME_MS: return &engine_start_params.boost_time_ms;
 	case ENGINE_START_PARAM_BOOST_CURRENT_1: return &engine_start_params.boost_current_1;
 	case ENGINE_START_PARAM_BOOST_CURRENT_2: return &engine_start_params.boost_current_2;
 	case ENGINE_START_PARAM_BOOST_CURRENT_3: return &engine_start_params.boost_current_3;
-	case ENGINE_START_PARAM_BOOST_PULSE_MS: return &engine_start_params.boost_pulse_ms;
-	case ENGINE_START_PARAM_BOOST_GAP_MS: return &engine_start_params.boost_gap_ms;
-	case ENGINE_START_PARAM_BOOST_MAX_PULSES: return &engine_start_params.boost_max_pulses;
-	case ENGINE_START_PARAM_BOOST_SUCCESS_ERPM: return &engine_start_params.boost_success_erpm;
 	case ENGINE_START_PARAM_ACCEL_CURRENT: return &engine_start_params.accel_current;
-	case ENGINE_START_PARAM_ACCEL_TARGET_ERPM: return &engine_start_params.accel_target_erpm;
-	case ENGINE_START_PARAM_ACCEL_RAMP_ERPM_S: return &engine_start_params.accel_ramp_erpm_s;
-	case ENGINE_START_PARAM_OBS_MIN_ERPM: return &engine_start_params.obs_min_erpm;
-	case ENGINE_START_PARAM_BLEND_TIME_MS: return &engine_start_params.blend_time_ms;
-	case ENGINE_START_PARAM_RETRY_DELAY_MS: return &engine_start_params.retry_delay_ms;
-	case ENGINE_START_PARAM_MAX_RETRY: return &engine_start_params.max_retry;
 	case ENGINE_START_PARAM_MAX_START_TIME_MS: return &engine_start_params.max_start_time_ms;
-	case ENGINE_START_PARAM_STALL_ERPM: return &engine_start_params.stall_erpm;
-	case ENGINE_START_PARAM_STALL_CURRENT: return &engine_start_params.stall_current;
-	case ENGINE_START_PARAM_STALL_DUTY: return &engine_start_params.stall_duty;
-	case ENGINE_START_PARAM_COMPRESSION_TIME_MS: return &engine_start_params.compression_time_ms;
-	case ENGINE_START_PARAM_OBS_STABLE_TIME_MS: return &engine_start_params.obs_stable_time_ms;
-	case ENGINE_START_PARAM_DIRECTION: return &engine_start_params.direction;
-	case ENGINE_START_PARAM_STALL_CONFIRM_MS: return &engine_start_params.stall_confirm_ms;
-	case ENGINE_START_PARAM_MAX_TOTAL_PULSES: return &engine_start_params.max_total_pulses;
 	case ENGINE_START_PARAM_MIN_VIN: return &engine_start_params.min_vin;
-	case ENGINE_START_PARAM_BACKOFF_MS: return &engine_start_params.backoff_ms;
-	case ENGINE_START_PARAM_BACKOFF_REVERSE_ENABLE: return &engine_start_params.backoff_reverse_enable;
-	case ENGINE_START_PARAM_BACKOFF_CURRENT: return &engine_start_params.backoff_current;
-	case ENGINE_START_PARAM_BACKOFF_ERPM: return &engine_start_params.backoff_erpm;
-	case ENGINE_START_PARAM_ENGINE_PERIOD_MS: return &engine_start_params.engine_period_ms;
-	case ENGINE_START_PARAM_PREWARN_HOLD_MS: return &engine_start_load_prewarn_hold_ms;
-	case ENGINE_START_PARAM_PULSE_RATIO: return &engine_start_params.pulse_ratio;
-	case ENGINE_START_PARAM_PREWARN_RATIO: return &engine_start_params.prewarn_ratio;
-	case ENGINE_START_PARAM_GAP_RATIO: return &engine_start_params.gap_ratio;
+	case ENGINE_START_PARAM_EVENT_CONFIDENCE_THRESHOLD: return &engine_start_params.event_confidence_threshold;
+	case ENGINE_START_PARAM_EVENT_TIMEOUT_MS: return &engine_start_params.event_timeout_ms;
 	case ENGINE_START_PARAM_PRELOAD_ENABLE: return &engine_start_params.preload_enable;
-	case ENGINE_START_PARAM_PRELOAD_CURRENT: return &engine_start_params.preload_current;
-	case ENGINE_START_PARAM_PRELOAD_TIME_MS: return &engine_start_params.preload_time_ms;
-	case ENGINE_START_PARAM_PRELOAD_SETTLE_MS: return &engine_start_params.preload_settle_ms;
-	case ENGINE_START_PARAM_PULL_STALL_IGNORE_MS: return &engine_start_params.pull_stall_ignore_ms;
 	default: return 0;
 	}
 }
@@ -1250,43 +1195,13 @@ static bool engine_start_param_valid(engine_start_param_id_t param, float value)
 	}
 
 	switch (param) {
-	case ENGINE_START_PARAM_DIRECTION:
-		return fabsf(value) >= 0.5f && fabsf(value) <= 1.0f;
-	case ENGINE_START_PARAM_BACKOFF_REVERSE_ENABLE:
 	case ENGINE_START_PARAM_PRELOAD_ENABLE:
 		return value >= 0.0f && value <= 1.0f;
-	case ENGINE_START_PARAM_PULSE_RATIO:
-	case ENGINE_START_PARAM_PREWARN_RATIO:
-	case ENGINE_START_PARAM_GAP_RATIO:
-		return value > 0.0f && value <= 5.0f;
-	case ENGINE_START_PARAM_STALL_DUTY:
+	case ENGINE_START_PARAM_EVENT_CONFIDENCE_THRESHOLD:
 		return value >= 0.0f && value <= 1.0f;
-	case ENGINE_START_PARAM_MAX_RETRY:
-	case ENGINE_START_PARAM_BOOST_MAX_PULSES:
-	case ENGINE_START_PARAM_MAX_TOTAL_PULSES:
-		return value >= 0.0f && value <= 20.0f;
-	case ENGINE_START_PARAM_ALIGN_TIME_MS:
-	case ENGINE_START_PARAM_BOOST_TIME_MS:
-	case ENGINE_START_PARAM_BOOST_PULSE_MS:
-	case ENGINE_START_PARAM_BOOST_GAP_MS:
-	case ENGINE_START_PARAM_ENGINE_PERIOD_MS:
-	case ENGINE_START_PARAM_PREWARN_HOLD_MS:
-	case ENGINE_START_PARAM_BLEND_TIME_MS:
-	case ENGINE_START_PARAM_RETRY_DELAY_MS:
 	case ENGINE_START_PARAM_MAX_START_TIME_MS:
-	case ENGINE_START_PARAM_COMPRESSION_TIME_MS:
-	case ENGINE_START_PARAM_OBS_STABLE_TIME_MS:
-	case ENGINE_START_PARAM_STALL_CONFIRM_MS:
-	case ENGINE_START_PARAM_BACKOFF_MS:
-	case ENGINE_START_PARAM_PRELOAD_TIME_MS:
-	case ENGINE_START_PARAM_PRELOAD_SETTLE_MS:
-	case ENGINE_START_PARAM_PULL_STALL_IGNORE_MS:
+	case ENGINE_START_PARAM_EVENT_TIMEOUT_MS:
 		return value > 0.0f;
-	case ENGINE_START_PARAM_PRELOAD_CURRENT:
-		return value <= 0.0f && value >= -30.0f;
-	case ENGINE_START_PARAM_BACKOFF_CURRENT:
-	case ENGINE_START_PARAM_BACKOFF_ERPM:
-		return true;
 	default:
 		return value >= 0.0f;
 	}
@@ -1303,25 +1218,6 @@ bool mcpwm_foc_engine_start_set_param(engine_start_param_id_t param, float value
 	}
 
 	*p = value;
-	if (param == ENGINE_START_PARAM_BOOST_CURRENT) {
-		engine_start_params.boost_current_1 = value;
-	} else if (param == ENGINE_START_PARAM_BOOST_TIME_MS) {
-		engine_start_manual_boost_pulse_ms = true;
-		engine_start_params.boost_pulse_ms = value;
-	} else if (param == ENGINE_START_PARAM_BOOST_PULSE_MS) {
-		engine_start_manual_boost_pulse_ms = true;
-		engine_start_params.boost_time_ms = value;
-	} else if (param == ENGINE_START_PARAM_BOOST_GAP_MS) {
-		engine_start_manual_boost_gap_ms = true;
-	} else if (param == ENGINE_START_PARAM_PREWARN_HOLD_MS) {
-		engine_start_manual_prewarn_hold_ms = true;
-	} else if (param == ENGINE_START_PARAM_ENGINE_PERIOD_MS) {
-		engine_start_update_timing();
-	} else if (param == ENGINE_START_PARAM_PULSE_RATIO ||
-			param == ENGINE_START_PARAM_PREWARN_RATIO ||
-			param == ENGINE_START_PARAM_GAP_RATIO) {
-		engine_start_update_timing();
-	}
 	return true;
 }
 
@@ -1341,45 +1237,10 @@ bool mcpwm_foc_engine_start_get_status(engine_start_status_t *status) {
 	}
 
 	status->state = engine_start_state;
-	status->active = engine_start_active;
-	status->retry_count = engine_start_retry_count;
-	status->boost_pulse_count = engine_start_boost_pulse_count;
-	status->total_pulse_count = engine_start_total_pulse_count;
-	status->openloop_erpm = engine_start_openloop_erpm * engine_start_direction();
-	status->openloop_phase = RAD2DEG_f(get_motor_now()->m_openloop_phase);
-	status->blend = engine_start_blend;
-	status->iq_target = engine_start_iq_target;
-	status->erpm_abs_filt = engine_start_erpm_abs_filt;
-	status->current_abs_filt = engine_start_current_abs_filt;
-	status->duty_abs_filt = engine_start_duty_abs_filt;
-	status->accel_filt = engine_start_accel_filt;
-	status->load_score = engine_start_load_score;
-	status->load_delta = engine_start_load_delta;
-	status->compression_ms = engine_start_compression_ms;
-	status->stall_ms = engine_start_stall_ms;
-	status->obs_stable_ms = engine_start_obs_stable_ms;
+	status->event_state = engine_start_event_state;
+	status->event_confidence = engine_start_event_confidence;
 	status->last_stop_reason = engine_start_last_stop_reason;
-	status->stability_score = engine_start_v3v4.stability_score;
-	status->learning_state = engine_start_v3v4.state;
-	status->learning_window_count = engine_start_attempt_window_count;
-	status->consecutive_success = engine_start_v3v4.consecutive_success;
-	status->strategy = engine_start_strategy;
-	status->knowledge_count = engine_start_knowledge_count;
-	int safe_count = engine_start_attempt_count_safe();
-	status->avg_start_time_ms = (float)engine_start_attempt_time_sum_ms / (float)safe_count;
-	status->v6_confidence = engine_start_v6_confidence;
-	status->learning_gain = engine_start_learning_gain;
-	status->policy_mode = (int)engine_start_policy_mode;
-	status->timing_mode =
-			(engine_start_manual_boost_pulse_ms ? ENGINE_TIMING_MODE_PULSE_MANUAL : 0) |
-			(engine_start_manual_boost_gap_ms ? ENGINE_TIMING_MODE_GAP_MANUAL : 0) |
-			(engine_start_manual_prewarn_hold_ms ? ENGINE_TIMING_MODE_PREWARN_MANUAL : 0);
-	status->timing_clamp_status = engine_start_timing_clamp_status;
-	status->preload_enable = engine_start_params.preload_enable >= 0.5f ? 1 : 0;
-	status->preload_active = engine_start_state == ENGINE_START_PRELOAD || engine_start_state == ENGINE_START_PRELOAD_SETTLE;
-	status->preload_elapsed_ms = status->preload_active ? engine_start_elapsed_ms(engine_start_timer) : 0;
-	status->pull_elapsed_ms = engine_start_state == ENGINE_START_PULL ? engine_start_elapsed_ms(engine_start_timer) : 0;
-	status->pull_stall_ignored = engine_start_pull_stall_ignored;
+	status->active = engine_start_active;
 	return true;
 }
 
@@ -1419,6 +1280,10 @@ static void engine_start_reset(void) {
 	engine_start_compression_ms = 0;
 	engine_start_obs_stable_ms = 0;
 	engine_start_pull_stall_ignored = false;
+	engine_start_event_state = ENGINE_EVENT_NONE;
+	engine_start_event_candidate = ENGINE_EVENT_NONE;
+	engine_start_event_debounce_count = 0;
+	engine_start_event_confidence = 0.0f;
 	engine_start_last_stop_reason = ENGINE_STOP_NONE;
 	engine_start_attempt_recorded = false;
 	engine_start_timer = chVTGetSystemTimeX();
@@ -1449,19 +1314,8 @@ void mcpwm_foc_engine_start(void) {
 	}
 
 	engine_start_reset();
-	if (engine_start_v6_preload_knowledge()) {
-		if (engine_start_v6_confidence >= ENGINE_KNOWLEDGE_CONFIDENCE_HIGH) {
-			engine_start_policy_mode = ENGINE_POLICY_V6_ONLY;
-		} else {
-			// Medium-confidence V6 matches keep their preload, but skip V5 override to avoid strategy tug-of-war.
-			engine_start_policy_mode = ENGINE_POLICY_HYBRID_LOCKED;
-		}
-	} else {
-		engine_start_policy_mode = ENGINE_POLICY_V5_ONLY;
-		engine_start_v5_select_strategy();
-	}
 	engine_start_active = true;
-	engine_start_state = engine_start_params.preload_enable >= 0.5f ? ENGINE_START_PRELOAD : ENGINE_START_ALIGN;
+	engine_start_state = ENGINE_START_ALIGN;
 	engine_start_timer = chVTGetSystemTimeX();
 	engine_start_global_timer = engine_start_timer;
 	engine_start_openloop_erpm = engine_start_params.pull_start_erpm;
@@ -1503,22 +1357,8 @@ static void engine_start_update_filters(float dt) {
 	utils_truncate_number(&engine_start_load_delta, -ENGINE_LOAD_DELTA_MAX, ENGINE_LOAD_DELTA_MAX);
 	engine_start_erpm_prev = erpm;
 
-	bool stall_cond = engine_start_erpm_abs_filt < engine_start_params.stall_erpm &&
-			engine_start_current_abs_filt > engine_start_params.stall_current &&
-			engine_start_duty_abs_filt > engine_start_params.stall_duty;
-
-	bool compression_cond = stall_cond ||
-			(engine_start_accel_filt < -engine_start_params.pull_ramp_erpm_s &&
-					engine_start_current_abs_filt > engine_start_params.stall_current &&
-					engine_start_duty_abs_filt > engine_start_params.stall_duty);
-
-	int dt_ms = (int)(dt * 1000.0f);
-	if (dt_ms < 1) {
-		dt_ms = 1;
-	}
-
-	engine_start_stall_ms = stall_cond ? engine_start_stall_ms + dt_ms : 0;
-	engine_start_compression_ms = compression_cond ? engine_start_compression_ms + dt_ms : 0;
+	engine_start_stall_ms = 0;
+	engine_start_compression_ms = 0;
 }
 
 static bool engine_start_detect_compression(void) {
@@ -1527,6 +1367,57 @@ static bool engine_start_detect_compression(void) {
 
 static bool engine_start_detect_stall(void) {
 	return engine_start_stall_ms >= engine_start_params.stall_confirm_ms;
+}
+
+static float engine_start_clamp01(float value) {
+	utils_truncate_number(&value, 0.0f, 1.0f);
+	return value;
+}
+
+static void engine_start_update_event(void) {
+	float load_rise = engine_start_clamp01(engine_start_load_delta / ENGINE_LOAD_DELTA_MAX);
+	float load_fall = engine_start_clamp01(-engine_start_load_delta / ENGINE_LOAD_DELTA_MAX);
+	float iq_level = engine_start_clamp01(engine_start_current_abs_filt / 120.0f);
+	float rpm_decel = engine_start_clamp01(-engine_start_accel_filt / 2500.0f);
+	float rpm_accel = engine_start_clamp01(engine_start_accel_filt / 2500.0f);
+	float steady_peak = engine_start_clamp01(1.0f - fabsf(engine_start_load_delta) / ENGINE_LOAD_DELTA_MAX);
+
+	float enter_conf = engine_start_clamp01(0.55f * load_rise + 0.25f * iq_level + 0.20f * rpm_decel);
+	float peak_conf = engine_start_clamp01(0.40f * iq_level + 0.35f * rpm_decel + 0.25f * steady_peak);
+	float release_conf = engine_start_clamp01(0.55f * load_fall + 0.30f * rpm_accel + 0.15f * (1.0f - iq_level));
+
+	engine_start_event_t candidate = ENGINE_EVENT_NONE;
+	float confidence = 0.0f;
+
+	if (enter_conf >= peak_conf && enter_conf >= release_conf) {
+		candidate = ENGINE_EVENT_ENTER_COMPRESSION;
+		confidence = enter_conf;
+	} else if (peak_conf >= release_conf) {
+		candidate = ENGINE_EVENT_PEAK_REACHED;
+		confidence = peak_conf;
+	} else {
+		candidate = ENGINE_EVENT_RELEASE;
+		confidence = release_conf;
+	}
+
+	if (confidence < engine_start_params.event_confidence_threshold) {
+		candidate = ENGINE_EVENT_NONE;
+	}
+
+	if (candidate == engine_start_event_candidate) {
+		engine_start_event_debounce_count++;
+	} else {
+		engine_start_event_candidate = candidate;
+		engine_start_event_debounce_count = 1;
+	}
+
+	if (candidate != ENGINE_EVENT_NONE && engine_start_event_debounce_count >= 2) {
+		engine_start_event_state = candidate;
+		engine_start_event_confidence = confidence;
+	} else if (candidate == ENGINE_EVENT_NONE) {
+		engine_start_event_state = ENGINE_EVENT_NONE;
+		engine_start_event_confidence = confidence;
+	}
 }
 
 static void engine_start_update_high_load_latch(float dt, bool compression) {
@@ -1976,48 +1867,13 @@ static void engine_start_update(float dt) {
 		return;
 	}
 
-	if (engine_start_total_pulse_count > engine_start_params.max_total_pulses) {
-		engine_start_fault(ENGINE_STOP_MAX_PULSES);
-		return;
-	}
-
 	state_hold_timer += dt;
 	engine_start_update_filters(dt);
-	bool compression = engine_start_detect_compression();
-	bool stall = engine_start_detect_stall();
-	engine_start_pull_stall_ignored = false;
-	if (engine_start_state == ENGINE_START_PRELOAD || engine_start_state == ENGINE_START_PRELOAD_SETTLE) {
-		compression = false;
-		stall = false;
-	}
-	if (engine_start_pull_stall_ignore_active(stall)) {
-		// PULL startup can be low-ERPM on the bench; ignore only this early false stall window.
-		engine_start_pull_stall_ignored = true;
-		stall = false;
-		compression = false;
-	}
-	engine_start_update_high_load_latch(dt, compression);
-
-	if (engine_start_current_abs_filt > ENGINE_OVERCURRENT_CURRENT) {
-		engine_start_fault(ENGINE_STOP_OVERCURRENT);
-		return;
-	}
-
-	if (stall && engine_start_state != ENGINE_START_BACKOFF &&
-			engine_start_state != ENGINE_START_FAULT &&
-			(engine_start_state != ENGINE_START_RECOVER ||
-					state_hold_timer >= ((float)ENGINE_BACKOFF_RECOVER_HOLD_MS / 1000.0f))) {
-		// BACKOFF has priority over PULSE/GAP/ACCEL; RECOVER keeps its 200 ms
-		// hold-off before a persistent stall can force BACKOFF again.
-		engine_start_enter(ENGINE_START_BACKOFF);
-	}
+	engine_start_update_event();
 
 	if (engine_start_state != ENGINE_START_PULSE &&
 			engine_start_state != ENGINE_START_GAP &&
 			engine_start_state != ENGINE_START_BACKOFF &&
-			engine_start_state != ENGINE_START_RECOVER &&
-			!compression && !stall &&
-			engine_start_low_load() &&
 			engine_start_erpm_abs_filt > engine_start_params.obs_min_erpm) {
 		int dt_ms = (int)(dt * 1000.0f);
 		engine_start_obs_stable_ms += dt_ms > 0 ? dt_ms : 1;
@@ -2026,25 +1882,8 @@ static void engine_start_update(float dt) {
 	}
 
 	switch (engine_start_state) {
-	case ENGINE_START_PRELOAD:
-		// Optional low-current reverse preload before the normal ALIGN/PULL sequence.
-		engine_start_set_openloop_current(engine_start_params.preload_current, fabsf(engine_start_params.backoff_erpm), dt);
-		if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.preload_time_ms) {
-			engine_start_stop_output();
-			engine_start_enter(ENGINE_START_PRELOAD_SETTLE);
-		}
-		break;
-
-	case ENGINE_START_PRELOAD_SETTLE:
-		// Let the crank settle after reverse preload before starting the original flow.
-		engine_start_stop_output();
-		if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.preload_settle_ms) {
-			engine_start_enter(ENGINE_START_ALIGN);
-		}
-		break;
-
 	case ENGINE_START_ALIGN:
-		// Pre-position rotor with a fixed open-loop electrical angle before pulling the crank.
+		// Fixed electrical angle alignment before event-driven PULL.
 		mcpwm_foc_set_openloop_phase(engine_start_params.align_current, 0.0f);
 		if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.align_time_ms) {
 			engine_start_openloop_erpm = engine_start_params.pull_start_erpm;
@@ -2053,103 +1892,71 @@ static void engine_start_update(float dt) {
 		break;
 
 	case ENGINE_START_PULL:
-		// Slow open-loop pull; transition to LOAD_DETECT when load rises or pull speed is reached.
+		// Event wait mode: no stall-based BACKOFF and no pulse timing decision.
 		engine_start_openloop_erpm += engine_start_params.pull_ramp_erpm_s * dt;
 		utils_truncate_number(&engine_start_openloop_erpm, engine_start_params.pull_start_erpm, engine_start_params.pull_target_erpm);
 		engine_start_set_openloop_current(engine_start_params.pull_current, engine_start_openloop_erpm, dt);
-		if (compression || engine_start_high_load() ||
-				engine_start_erpm_reached(engine_start_params.pull_target_erpm)) {
-			engine_start_enter(ENGINE_START_LOAD_DETECT);
+		if (engine_start_event_state == ENGINE_EVENT_ENTER_COMPRESSION) {
+			engine_start_enter(ENGINE_START_PULSE);
+		} else if (engine_start_event_state == ENGINE_EVENT_PEAK_REACHED) {
+			engine_start_enter(ENGINE_START_ACCEL);
+		} else if (engine_start_event_state == ENGINE_EVENT_RELEASE) {
+			engine_start_enter(engine_start_observer_stable() ? ENGINE_START_BLEND : ENGINE_START_ACCEL);
+		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.event_timeout_ms) {
+			engine_start_enter(ENGINE_START_BACKOFF);
 		}
 		break;
 
 	case ENGINE_START_LOAD_DETECT:
-		// O(1) load classifier: high load means compression/pulse, low load means acceleration.
-		if (stall) {
-			engine_start_enter(ENGINE_START_BACKOFF);
-		} else if (engine_start_high_load()) {
+		// Compatibility state: route only by robust events, never by stall thresholds.
+		if (engine_start_event_state == ENGINE_EVENT_ENTER_COMPRESSION) {
 			engine_start_enter(ENGINE_START_PULSE);
-		} else if (engine_start_low_load() &&
-				engine_start_erpm_reached(engine_start_params.boost_success_erpm)) {
+		} else if (engine_start_event_state == ENGINE_EVENT_PEAK_REACHED ||
+				engine_start_event_state == ENGINE_EVENT_RELEASE) {
 			engine_start_enter(ENGINE_START_ACCEL);
-		} else if (engine_start_erpm_reached(engine_start_params.pull_target_erpm)) {
-			engine_start_enter(ENGINE_START_ACCEL);
+		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.event_timeout_ms) {
+			engine_start_enter(ENGINE_START_BACKOFF);
 		} else {
 			engine_start_enter(ENGINE_START_PULL);
 		}
 		break;
 
 	case ENGINE_START_PULSE:
-		// Time is the primary pulse limiter. State checks are secondary and only
-		// allowed after the minimum energy window to avoid a weak early exit.
-		pulse_min_time_counter += dt;
+		// Event-driven boost: exit on peak/release events, not fixed boost-pulse-ms.
 		engine_start_set_openloop_current(engine_start_boost_current_now, engine_start_openloop_erpm, dt);
-		if (pulse_min_time_counter < ((float)ENGINE_PULSE_MIN_MS / 1000.0f)) {
-			break;
-		}
-		if (engine_start_erpm_reached(engine_start_params.boost_success_erpm)) {
+		if (engine_start_event_state == ENGINE_EVENT_PEAK_REACHED) {
 			engine_start_enter(ENGINE_START_GAP);
-		} else if (engine_start_accel_filt <= 0.0f &&
-				engine_start_load_delta >= 0.0f &&
-				engine_start_current_abs_filt > engine_start_params.stall_current) {
-			engine_start_enter(ENGINE_START_GAP);
-		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.boost_pulse_ms) {
-			engine_start_enter(ENGINE_START_GAP);
+		} else if (engine_start_event_state == ENGINE_EVENT_RELEASE) {
+			engine_start_enter(ENGINE_START_ACCEL);
+		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.event_timeout_ms) {
+			engine_start_enter(ENGINE_START_BACKOFF);
 		}
 		break;
 
 	case ENGINE_START_GAP:
-		// Release gap between pulses. Do not keep pushing at high current.
 		engine_start_stop_output();
-		if (stall) {
-			engine_start_enter(ENGINE_START_BACKOFF);
-		} else if (engine_start_low_load() &&
-				engine_start_erpm_reached(engine_start_params.boost_success_erpm)) {
+		if (engine_start_event_state == ENGINE_EVENT_RELEASE ||
+				engine_start_event_state == ENGINE_EVENT_PEAK_REACHED) {
 			engine_start_enter(ENGINE_START_ACCEL);
-		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.boost_gap_ms) {
-			if (engine_start_boost_pulse_count < engine_start_params.boost_max_pulses &&
-					engine_start_total_pulse_count < engine_start_params.max_total_pulses) {
-				engine_start_enter(ENGINE_START_LOAD_DETECT);
-			} else {
-				engine_start_enter(ENGINE_START_BACKOFF);
-			}
+		} else if (engine_start_event_state == ENGINE_EVENT_ENTER_COMPRESSION) {
+			engine_start_enter(ENGINE_START_PULSE);
+		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.event_timeout_ms) {
+			engine_start_enter(ENGINE_START_BACKOFF);
 		}
 		break;
 
 	case ENGINE_START_BACKOFF:
-		// Stall protection: unload only. Recovery handles optional tiny reverse after the delay.
+		// BACKOFF is now only the no-event watchdog escape path.
 		engine_start_stop_output();
-		if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.backoff_ms &&
-				state_hold_timer >= ((float)ENGINE_BACKOFF_RECOVER_HOLD_MS / 1000.0f)) {
-			engine_start_retry_count++;
-			if (engine_start_retry_count <= engine_start_params.max_retry) {
-				engine_start_enter(ENGINE_START_RECOVER);
-			} else {
-				engine_start_fault(ENGINE_STOP_MAX_RETRY);
-			}
-		}
-		break;
-
-	case ENGINE_START_RECOVER:
-		// Recover from compression lock: default 0 A; optional tiny reverse must be enabled explicitly.
-		if (engine_start_params.backoff_reverse_enable >= 0.5f) {
-			engine_start_set_openloop_current(engine_start_params.backoff_current, fabsf(engine_start_params.backoff_erpm), dt);
-		} else {
-			engine_start_stop_output();
-		}
-		if (engine_start_elapsed_ms(engine_start_timer) >= ENGINE_RECOVER_MS &&
-				state_hold_timer >= ((float)ENGINE_BACKOFF_RECOVER_HOLD_MS / 1000.0f)) {
-			engine_start_enter(ENGINE_START_ALIGN);
-		}
+		engine_start_fault(ENGINE_STOP_TIMEOUT);
 		break;
 
 	case ENGINE_START_ACCEL:
-		// Continue open-loop acceleration until the observer has enough speed margin.
 		engine_start_openloop_erpm += engine_start_params.accel_ramp_erpm_s * dt;
 		utils_truncate_number(&engine_start_openloop_erpm, engine_start_params.pull_start_erpm, engine_start_params.accel_target_erpm);
 		engine_start_set_openloop_current(engine_start_params.accel_current, engine_start_openloop_erpm, dt);
-		if (compression || stall) {
-			engine_start_enter(ENGINE_START_LOAD_DETECT);
+		if (engine_start_event_state == ENGINE_EVENT_ENTER_COMPRESSION) {
+			engine_start_enter(ENGINE_START_PULSE);
 		} else if (engine_start_observer_stable()) {
 			engine_start_blend = 0.0f;
 			engine_start_openloop_phase = RAD2DEG_f(get_motor_now()->m_openloop_phase);
@@ -2158,37 +1965,19 @@ static void engine_start_update(float dt) {
 		break;
 
 	case ENGINE_START_BLEND: {
-		// Blend open-loop phase into observer phase; do not hard-switch sensorless angle.
 		engine_start_blend = (float)engine_start_elapsed_ms(engine_start_timer) / (float)engine_start_params.blend_time_ms;
 		utils_truncate_number(&engine_start_blend, 0.0f, 1.0f);
 		float obs_phase = mcpwm_foc_get_phase_observer();
 		float phase = engine_start_openloop_phase + utils_angle_difference(obs_phase, engine_start_openloop_phase) * engine_start_blend;
 		mcpwm_foc_set_openloop_phase(engine_start_params.accel_current, phase);
-		if (compression || stall) {
-			engine_start_enter(ENGINE_START_LOAD_DETECT);
-		} else if (engine_start_blend >= 1.0f) {
+		if (engine_start_blend >= 1.0f) {
 			engine_start_enter(ENGINE_START_RUN);
 		}
 		} break;
 
 	case ENGINE_START_RUN:
-		// Startup assist is complete; return control to normal FOC current/observer path.
-		engine_start_v3v4_record(ENGINE_ATTEMPT_SUCCESS);
 		engine_start_active = false;
 		mcpwm_foc_set_current(0.0f);
-		break;
-
-	case ENGINE_START_RETRY:
-		// Let the crank settle before another align/pull/boost attempt.
-		engine_start_stop_output();
-		if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.retry_delay_ms) {
-			engine_start_retry_count++;
-			if (engine_start_retry_count <= engine_start_params.max_retry) {
-				engine_start_enter(engine_start_params.preload_enable >= 0.5f ? ENGINE_START_PRELOAD : ENGINE_START_ALIGN);
-			} else {
-				engine_start_fault(ENGINE_STOP_MAX_RETRY);
-			}
-		}
 		break;
 
 	case ENGINE_START_FAULT:
@@ -2201,6 +1990,7 @@ static void engine_start_update(float dt) {
 		break;
 	}
 }
+
 #else
 void mcpwm_foc_engine_start(void) {}
 void mcpwm_foc_engine_stop(void) {}

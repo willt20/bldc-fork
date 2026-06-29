@@ -1149,39 +1149,11 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 				stop_reason_name = stop_reason_names[status.last_stop_reason];
 			}
 
-			commands_printf("Engine start active       : %s", status.active ? "true" : "false");
-			commands_printf("Engine start state        : %d", status.state);
-			commands_printf("Engine start retry count  : %d", status.retry_count);
-			commands_printf("Engine start pulse count  : %d / total %d", status.boost_pulse_count, status.total_pulse_count);
-			commands_printf("Engine start openloop erpm: %.1f", (double)status.openloop_erpm);
-			commands_printf("Engine start openloop deg : %.1f", (double)status.openloop_phase);
-			commands_printf("Engine start blend        : %.3f", (double)status.blend);
-			commands_printf("Engine start iq target    : %.1f", (double)status.iq_target);
-			commands_printf("Engine start erpm filt    : %.1f", (double)status.erpm_abs_filt);
-			commands_printf("Engine start current filt : %.1f", (double)status.current_abs_filt);
-			commands_printf("Engine start duty filt    : %.3f", (double)status.duty_abs_filt);
-			commands_printf("Engine start accel filt   : %.1f", (double)status.accel_filt);
-			commands_printf("Engine start load score   : %.1f", (double)status.load_score);
-			commands_printf("Engine start load delta   : %.1f", (double)status.load_delta);
-			commands_printf("Engine start compression  : %d ms", status.compression_ms);
-			commands_printf("Engine start stall        : %d ms", status.stall_ms);
-			commands_printf("Engine start obs stable   : %d ms", status.obs_stable_ms);
-			commands_printf("Engine start stop reason  : %s (%d)", stop_reason_name, status.last_stop_reason);
-			commands_printf("Engine start stability    : %.3f", (double)status.stability_score);
-			commands_printf("Engine start learning     : %s (%d)", status.learning_state == 1 ? "STABLE_LOCK" : "LEARNING", status.learning_state);
-			commands_printf("Engine start learn window : %d, consecutive success %d", status.learning_window_count, status.consecutive_success);
-			commands_printf("Engine start strategy     : %d, knowledge entries %d", status.strategy, status.knowledge_count);
-			commands_printf("Engine start avg time     : %.1f ms", (double)status.avg_start_time_ms);
-			commands_printf("ES V6 confidence: %.3f", (double)status.v6_confidence);
-			commands_printf("ES policy mode  : %d", status.policy_mode);
-			commands_printf("ES timing mode  : 0x%02X", status.timing_mode);
-			commands_printf("ES pre: en%d act%d pre%d pull%d ign%d",
-					status.preload_enable, status.preload_active ? 1 : 0,
-					status.preload_elapsed_ms, status.pull_elapsed_ms, status.pull_stall_ignored ? 1 : 0);
-			commands_printf("ES timing clamp : pulse %s, gap %s, prewarn %s",
-					(status.timing_clamp_status & ENGINE_TIMING_CLAMP_PULSE) ? "CLAMPED" : "NORMAL",
-					(status.timing_clamp_status & ENGINE_TIMING_CLAMP_GAP) ? "CLAMPED" : "NORMAL",
-					(status.timing_clamp_status & ENGINE_TIMING_CLAMP_PREWARN) ? "CLAMPED" : "NORMAL");
+			commands_printf("Engine start active      : %s", status.active ? "true" : "false");
+			commands_printf("Engine start state       : %d", status.state);
+			commands_printf("Engine event state       : %d", status.event_state);
+			commands_printf("Engine event confidence  : %.3f", (double)status.event_confidence);
+			commands_printf("Engine fault/stop reason : %s (%d)", stop_reason_name, status.last_stop_reason);
 		} else {
 			commands_printf("Engine start status unavailable");
 		}
