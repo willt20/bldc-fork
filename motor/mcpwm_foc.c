@@ -184,99 +184,24 @@ typedef struct {
 	float pull_start_erpm;
 	float pull_target_erpm;
 	float pull_ramp_erpm_s;
-	float boost_current;
-	float boost_time_ms;
 	float boost_current_1;
 	float boost_current_2;
 	float boost_current_3;
-	float boost_pulse_ms;
-	float boost_gap_ms;
-	float boost_max_pulses;
-	float boost_success_erpm;
 	float accel_current;
 	float accel_target_erpm;
 	float accel_ramp_erpm_s;
 	float obs_min_erpm;
 	float blend_time_ms;
-	float retry_delay_ms;
-	float max_retry;
 	float max_start_time_ms;
-	float stall_erpm;
-	float stall_current;
-	float stall_duty;
-	float compression_time_ms;
 	float obs_stable_time_ms;
 	float direction;
-	float stall_confirm_ms;
-	float max_total_pulses;
 	float min_vin;
-	float backoff_ms;
-	float backoff_reverse_enable;
-	float backoff_current;
-	float backoff_erpm;
-	float engine_period_ms;
-	float pulse_ratio;
-	float prewarn_ratio;
-	float gap_ratio;
 	float preload_enable;
-	float preload_current;
-	float preload_time_ms;
-	float preload_settle_ms;
-	float pull_stall_ignore_ms;
 	float event_confidence_threshold;
 	float pull_event_timeout_ms;
 	float pulse_event_timeout_ms;
 } engine_start_params_t;
 
-typedef enum {
-	ENGINE_LEARNING = 0,
-	ENGINE_STABLE_LOCK
-} engine_start_learning_state_t;
-
-typedef struct {
-	int compression_fail_count;
-	int stall_fail_count;
-	int no_drive_fail_count;
-	int rebound_fail_count;
-	int success_count;
-	float stability_score;
-	int consecutive_success;
-	engine_start_learning_state_t state;
-} engine_start_v3v4_t;
-
-typedef enum {
-	ENGINE_ATTEMPT_NONE = 0,
-	ENGINE_ATTEMPT_COMPRESSION_FAIL,
-	ENGINE_ATTEMPT_STALL_FAIL,
-	ENGINE_ATTEMPT_NO_DRIVE_FAIL,
-	ENGINE_ATTEMPT_REBOUND_FAIL,
-	ENGINE_ATTEMPT_SUCCESS
-} engine_start_attempt_result_t;
-
-typedef enum {
-	ENGINE_STRATEGY_COLD_START = 0,
-	ENGINE_STRATEGY_NORMAL_START,
-	ENGINE_STRATEGY_HOT_START
-} engine_strategy_t;
-
-typedef enum {
-	ENGINE_POLICY_V5_ONLY = 0,
-	ENGINE_POLICY_V6_ONLY,
-	ENGINE_POLICY_HYBRID_LOCKED
-} engine_policy_mode_t;
-
-typedef struct {
-	float engine_signature_stall_rate;
-	float engine_signature_compression_rate;
-	float engine_signature_rebound_rate;
-	float engine_signature_avg_start_time;
-	float best_boost_current_1;
-	float best_boost_current_2;
-	float best_boost_current_3;
-	float best_gap_time;
-	float best_pulse_time;
-	engine_strategy_t best_strategy;
-} engine_start_knowledge_t;
 #endif
 
 // Private variables
@@ -292,13 +217,11 @@ static engine_start_state_t engine_start_state = ENGINE_START_IDLE;
 static bool engine_start_active = false;
 static systime_t engine_start_timer;
 static systime_t engine_start_global_timer;
-static int engine_start_retry_count = 0;
 static float engine_start_openloop_erpm = 0.0f;
 static float engine_start_openloop_phase = 0.0f;
 static float engine_start_blend = 0.0f;
 static float engine_start_iq_target = 0.0f;
 static int engine_start_boost_pulse_count = 0;
-static int engine_start_total_pulse_count = 0;
 static float engine_start_boost_current_now = 0.0f;
 static float engine_start_erpm_abs_filt = 0.0f;
 static float engine_start_current_abs_filt = 0.0f;
@@ -309,49 +232,10 @@ static float engine_start_load_score_prev = 0.0f;
 static float engine_start_load_delta_raw = 0.0f;
 static float engine_start_load_delta = 0.0f;
 static float engine_start_erpm_prev = 0.0f;
-static float engine_start_current_ripple_filt = 0.0f;
-static float high_load_stable_time = 0.0f;
-static float high_load_release_time = 0.0f;
 static float pulse_min_time_counter = 0.0f;
 static float state_hold_timer = 0.0f;
-static bool engine_start_high_load_latched = false;
-static bool engine_start_load_pre_warning = false;
-static int engine_start_load_prewarn_ms = 0;
-static int engine_start_stall_ms = 0;
-static int engine_start_compression_ms = 0;
 static int engine_start_obs_stable_ms = 0;
 static engine_start_stop_reason_t engine_start_last_stop_reason = ENGINE_STOP_NONE;
-static bool engine_start_attempt_recorded = false;
-static engine_start_v3v4_t engine_start_v3v4 = {
-	.stability_score = 0.0f,
-	.state = ENGINE_LEARNING
-};
-static engine_start_attempt_result_t engine_start_attempt_window[ENGINE_ADAPTIVE_WINDOW];
-static int engine_start_attempt_window_pos = 0;
-static int engine_start_attempt_window_count = 0;
-static int engine_start_attempt_time_window[ENGINE_ADAPTIVE_WINDOW];
-static int engine_start_attempt_time_sum_ms = 0;
-static engine_strategy_t engine_start_strategy = ENGINE_STRATEGY_NORMAL_START;
-static int engine_start_strategy_attempts_since_switch = ENGINE_STRATEGY_SWITCH_CONFIRM;
-static engine_start_knowledge_t engine_start_knowledge[ENGINE_KNOWLEDGE_MAX];
-static int engine_start_knowledge_count = 0;
-static int engine_start_knowledge_pos = 0;
-static bool engine_start_knowledge_saved_for_lock = false;
-static float engine_start_v6_confidence = 0.0f;
-static engine_policy_mode_t engine_start_policy_mode = ENGINE_POLICY_V5_ONLY;
-static int engine_start_consecutive_compression_fail = 0;
-static int engine_start_consecutive_stall_fail = 0;
-static int engine_start_consecutive_no_drive_fail = 0;
-static int engine_start_consecutive_rebound_fail = 0;
-static float engine_start_learning_gain = ENGINE_ADAPTIVE_GAIN_MAX;
-static float engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
-static float engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
-static float engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
-static bool engine_start_manual_boost_pulse_ms = false;
-static bool engine_start_manual_boost_gap_ms = false;
-static bool engine_start_manual_prewarn_hold_ms = false;
-static uint8_t engine_start_timing_clamp_status = 0;
-static bool engine_start_pull_stall_ignored = false;
 static engine_start_event_t engine_start_event_state = ENGINE_EVENT_NONE;
 static engine_start_event_t engine_start_event_candidate = ENGINE_EVENT_NONE;
 static int engine_start_event_debounce_count = 0;
@@ -363,45 +247,19 @@ static engine_start_params_t engine_start_params = {
 	.pull_start_erpm = ENGINE_PULL_START_ERPM,
 	.pull_target_erpm = ENGINE_PULL_TARGET_ERPM,
 	.pull_ramp_erpm_s = ENGINE_PULL_RAMP_ERPM_S,
-	.boost_current = ENGINE_BOOST_CURRENT,
-	.boost_time_ms = ENGINE_BOOST_TIME_MS,
 	.boost_current_1 = ENGINE_BOOST_CURRENT_1,
 	.boost_current_2 = ENGINE_BOOST_CURRENT_2,
 	.boost_current_3 = ENGINE_BOOST_CURRENT_3,
-	.boost_pulse_ms = ENGINE_BOOST_PULSE_MS,
-	.boost_gap_ms = ENGINE_BOOST_GAP_MS,
-	.boost_max_pulses = ENGINE_BOOST_MAX_PULSES,
-	.boost_success_erpm = ENGINE_BOOST_SUCCESS_ERPM,
 	.accel_current = ENGINE_ACCEL_CURRENT,
 	.accel_target_erpm = ENGINE_ACCEL_TARGET_ERPM,
 	.accel_ramp_erpm_s = ENGINE_ACCEL_RAMP_ERPM_S,
 	.obs_min_erpm = ENGINE_OBS_MIN_ERPM,
 	.blend_time_ms = ENGINE_BLEND_TIME_MS,
-	.retry_delay_ms = ENGINE_RETRY_DELAY_MS,
-	.max_retry = ENGINE_MAX_RETRY,
 	.max_start_time_ms = ENGINE_MAX_START_TIME_MS,
-	.stall_erpm = ENGINE_STALL_ERPM,
-	.stall_current = ENGINE_STALL_CURRENT,
-	.stall_duty = ENGINE_STALL_DUTY,
-	.compression_time_ms = ENGINE_COMPRESSION_TIME_MS,
 	.obs_stable_time_ms = ENGINE_OBS_STABLE_TIME_MS,
 	.direction = ENGINE_DIRECTION,
-	.stall_confirm_ms = ENGINE_STALL_CONFIRM_MS,
-	.max_total_pulses = ENGINE_MAX_TOTAL_PULSES,
 	.min_vin = ENGINE_MIN_VIN,
-	.backoff_ms = ENGINE_BACKOFF_MS,
-	.backoff_reverse_enable = ENGINE_BACKOFF_REVERSE_ENABLE,
-	.backoff_current = ENGINE_BACKOFF_CURRENT,
-	.backoff_erpm = ENGINE_BACKOFF_ERPM,
-	.engine_period_ms = ENGINE_PERIOD_MS,
-	.pulse_ratio = ENGINE_PULSE_RATIO,
-	.prewarn_ratio = ENGINE_PREWARN_RATIO,
-	.gap_ratio = ENGINE_GAP_RATIO,
 	.preload_enable = ENGINE_PRELOAD_ENABLE,
-	.preload_current = ENGINE_PRELOAD_CURRENT,
-	.preload_time_ms = ENGINE_PRELOAD_TIME_MS,
-	.preload_settle_ms = ENGINE_PRELOAD_SETTLE_MS,
-	.pull_stall_ignore_ms = ENGINE_PULL_STALL_IGNORE_MS,
 	.event_confidence_threshold = ENGINE_EVENT_CONFIDENCE_THRESHOLD,
 	.pull_event_timeout_ms = ENGINE_PULL_EVENT_TIMEOUT_MS,
 	.pulse_event_timeout_ms = ENGINE_PULSE_EVENT_TIMEOUT_MS
@@ -420,33 +278,15 @@ static void hfi_update(volatile motor_all_state_t *motor, float dt);
 #if ENGINE_START_ENABLE
 static void engine_start_reset(void);
 static void engine_start_update(float dt);
-static bool engine_start_detect_compression(void);
-static bool engine_start_detect_stall(void);
-static bool engine_start_high_load(void);
-static bool engine_start_low_load(void);
-static bool engine_start_erpm_reached(float target_erpm);
 static bool engine_start_observer_stable(void);
 static void engine_start_update_filters(float dt);
 static void engine_start_update_event(void);
-static void engine_start_update_high_load_latch(float dt, bool compression);
 static void engine_start_set_openloop_current(float iq, float erpm, float dt);
 static void engine_start_stop_output(void);
 static void engine_start_params_load_defaults(void);
 static float engine_start_direction(void);
 static void engine_start_fault(engine_start_stop_reason_t reason);
 static float engine_start_select_boost_current(void);
-static void engine_start_v3v4_record(engine_start_attempt_result_t result);
-static int engine_start_attempt_count_safe(void);
-static void engine_start_v3_update(engine_start_attempt_result_t result);
-static void engine_start_v4_update(void);
-static void engine_start_adapt_param(float *param, float target, float min, float max);
-static engine_start_attempt_result_t engine_start_classify_fault(engine_start_stop_reason_t reason);
-static void engine_start_v5_select_strategy(void);
-static void engine_start_v5_apply_strategy(engine_strategy_t strategy);
-static void engine_start_v6_save_knowledge(void);
-static bool engine_start_v6_preload_knowledge(void);
-static bool engine_start_pull_stall_ignore_active(bool stall);
-static float engine_start_v6_similarity(const engine_start_knowledge_t *knowledge);
 #endif
 
 // Threads
@@ -1119,60 +959,28 @@ static void engine_start_update_timing(void) {
 
 
 static void engine_start_params_load_defaults(void) {
-	engine_start_manual_boost_pulse_ms = false;
-	engine_start_manual_boost_gap_ms = false;
-	engine_start_manual_prewarn_hold_ms = false;
 	engine_start_params.align_current = ENGINE_ALIGN_CURRENT;
 	engine_start_params.align_time_ms = ENGINE_ALIGN_TIME_MS;
 	engine_start_params.pull_current = ENGINE_PULL_CURRENT;
 	engine_start_params.pull_start_erpm = ENGINE_PULL_START_ERPM;
 	engine_start_params.pull_target_erpm = ENGINE_PULL_TARGET_ERPM;
 	engine_start_params.pull_ramp_erpm_s = ENGINE_PULL_RAMP_ERPM_S;
-	engine_start_params.boost_current = ENGINE_BOOST_CURRENT;
-	engine_start_params.boost_time_ms = ENGINE_BOOST_TIME_MS;
 	engine_start_params.boost_current_1 = ENGINE_BOOST_CURRENT_1;
 	engine_start_params.boost_current_2 = ENGINE_BOOST_CURRENT_2;
 	engine_start_params.boost_current_3 = ENGINE_BOOST_CURRENT_3;
-	engine_start_params.boost_pulse_ms = ENGINE_BOOST_PULSE_MS;
-	engine_start_params.boost_gap_ms = ENGINE_BOOST_GAP_MS;
-	engine_start_params.boost_max_pulses = ENGINE_BOOST_MAX_PULSES;
-	engine_start_params.boost_success_erpm = ENGINE_BOOST_SUCCESS_ERPM;
 	engine_start_params.accel_current = ENGINE_ACCEL_CURRENT;
 	engine_start_params.accel_target_erpm = ENGINE_ACCEL_TARGET_ERPM;
 	engine_start_params.accel_ramp_erpm_s = ENGINE_ACCEL_RAMP_ERPM_S;
 	engine_start_params.obs_min_erpm = ENGINE_OBS_MIN_ERPM;
 	engine_start_params.blend_time_ms = ENGINE_BLEND_TIME_MS;
-	engine_start_params.retry_delay_ms = ENGINE_RETRY_DELAY_MS;
-	engine_start_params.max_retry = ENGINE_MAX_RETRY;
 	engine_start_params.max_start_time_ms = ENGINE_MAX_START_TIME_MS;
-	engine_start_params.stall_erpm = ENGINE_STALL_ERPM;
-	engine_start_params.stall_current = ENGINE_STALL_CURRENT;
-	engine_start_params.stall_duty = ENGINE_STALL_DUTY;
-	engine_start_params.compression_time_ms = ENGINE_COMPRESSION_TIME_MS;
 	engine_start_params.obs_stable_time_ms = ENGINE_OBS_STABLE_TIME_MS;
 	engine_start_params.direction = ENGINE_DIRECTION;
-	engine_start_params.stall_confirm_ms = ENGINE_STALL_CONFIRM_MS;
-	engine_start_params.max_total_pulses = ENGINE_MAX_TOTAL_PULSES;
 	engine_start_params.min_vin = ENGINE_MIN_VIN;
-	engine_start_params.backoff_ms = ENGINE_BACKOFF_MS;
-	engine_start_params.backoff_reverse_enable = ENGINE_BACKOFF_REVERSE_ENABLE;
-	engine_start_params.backoff_current = ENGINE_BACKOFF_CURRENT;
-	engine_start_params.backoff_erpm = ENGINE_BACKOFF_ERPM;
-	engine_start_params.engine_period_ms = ENGINE_PERIOD_MS;
-	engine_start_params.pulse_ratio = ENGINE_PULSE_RATIO;
-	engine_start_params.prewarn_ratio = ENGINE_PREWARN_RATIO;
-	engine_start_params.gap_ratio = ENGINE_GAP_RATIO;
 	engine_start_params.preload_enable = ENGINE_PRELOAD_ENABLE;
-	engine_start_params.preload_current = ENGINE_PRELOAD_CURRENT;
-	engine_start_params.preload_time_ms = ENGINE_PRELOAD_TIME_MS;
-	engine_start_params.preload_settle_ms = ENGINE_PRELOAD_SETTLE_MS;
-	engine_start_params.pull_stall_ignore_ms = ENGINE_PULL_STALL_IGNORE_MS;
 	engine_start_params.event_confidence_threshold = ENGINE_EVENT_CONFIDENCE_THRESHOLD;
 	engine_start_params.pull_event_timeout_ms = ENGINE_PULL_EVENT_TIMEOUT_MS;
 	engine_start_params.pulse_event_timeout_ms = ENGINE_PULSE_EVENT_TIMEOUT_MS;
-	engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
-	engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
-	engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
 	engine_start_update_timing();
 }
 
@@ -1257,9 +1065,7 @@ static float engine_start_direction(void) {
 static void engine_start_reset(void) {
 	engine_start_state = ENGINE_START_IDLE;
 	engine_start_active = false;
-	engine_start_retry_count = 0;
 	engine_start_boost_pulse_count = 0;
-	engine_start_total_pulse_count = 0;
 	engine_start_boost_current_now = 0.0f;
 	engine_start_openloop_erpm = 0.0f;
 	engine_start_openloop_phase = 0.0f;
@@ -1274,24 +1080,14 @@ static void engine_start_reset(void) {
 	engine_start_load_delta_raw = 0.0f;
 	engine_start_load_delta = 0.0f;
 	engine_start_erpm_prev = 0.0f;
-	engine_start_current_ripple_filt = 0.0f;
-	high_load_stable_time = 0.0f;
-	high_load_release_time = 0.0f;
 	pulse_min_time_counter = 0.0f;
 	state_hold_timer = 0.0f;
-	engine_start_high_load_latched = false;
-	engine_start_load_pre_warning = false;
-	engine_start_load_prewarn_ms = 0;
-	engine_start_stall_ms = 0;
-	engine_start_compression_ms = 0;
 	engine_start_obs_stable_ms = 0;
-	engine_start_pull_stall_ignored = false;
 	engine_start_event_state = ENGINE_EVENT_NONE;
 	engine_start_event_candidate = ENGINE_EVENT_NONE;
 	engine_start_event_debounce_count = 0;
 	engine_start_event_confidence = 0.0f;
 	engine_start_last_stop_reason = ENGINE_STOP_NONE;
-	engine_start_attempt_recorded = false;
 	engine_start_timer = chVTGetSystemTimeX();
 	engine_start_global_timer = engine_start_timer;
 }
@@ -1344,35 +1140,22 @@ static void engine_start_update_filters(float dt) {
 	float current_abs = mcpwm_foc_get_abs_motor_current_filtered();
 	float duty_abs = mcpwm_foc_get_duty_cycle_abs_filter();
 	float accel = dt > 0.0f ? (erpm - engine_start_erpm_prev) / dt : 0.0f;
-	float current_delta = fabsf(current_abs - engine_start_current_abs_filt);
-
 	engine_start_erpm_abs_filt += (erpm_abs - engine_start_erpm_abs_filt) * ENGINE_LOAD_LP;
 	engine_start_current_abs_filt += (current_abs - engine_start_current_abs_filt) * ENGINE_LOAD_LP;
 	engine_start_duty_abs_filt += (duty_abs - engine_start_duty_abs_filt) * ENGINE_LOAD_LP;
 	engine_start_accel_filt += (accel - engine_start_accel_filt) * ENGINE_LP_SLOW;
-	engine_start_current_ripple_filt += (current_delta - engine_start_current_ripple_filt) * ENGINE_LP_SLOW;
 	engine_start_load_score_prev = engine_start_load_score;
 	engine_start_load_score = ENGINE_LOAD_K_CURRENT * engine_start_current_abs_filt +
 			ENGINE_LOAD_K_DUTY * engine_start_duty_abs_filt -
 			ENGINE_LOAD_K_ACCEL * engine_start_accel_filt;
 	engine_start_load_delta_raw = engine_start_load_score - engine_start_load_score_prev;
 	engine_start_load_delta = engine_start_load_delta_raw;
-	if (fabsf(engine_start_load_delta) < engine_start_load_delta_deadband) {
+	if (fabsf(engine_start_load_delta) < ENGINE_LOAD_DELTA_DEADBAND) {
 		engine_start_load_delta = 0.0f;
 	}
 	utils_truncate_number(&engine_start_load_delta, -ENGINE_LOAD_DELTA_MAX, ENGINE_LOAD_DELTA_MAX);
 	engine_start_erpm_prev = erpm;
 
-	engine_start_stall_ms = 0;
-	engine_start_compression_ms = 0;
-}
-
-static bool engine_start_detect_compression(void) {
-	return engine_start_compression_ms >= engine_start_params.compression_time_ms;
-}
-
-static bool engine_start_detect_stall(void) {
-	return engine_start_stall_ms >= engine_start_params.stall_confirm_ms;
 }
 
 static float engine_start_clamp01(float value) {
@@ -1426,71 +1209,6 @@ static void engine_start_update_event(void) {
 	}
 }
 
-static void engine_start_update_high_load_latch(float dt, bool compression) {
-	float delta_entry_score = (engine_start_load_high_score + ENGINE_LOAD_LOW_SCORE) * 0.5f;
-	bool score_high = engine_start_load_score > engine_start_load_high_score;
-	bool prewarn_cond = engine_start_load_score > delta_entry_score &&
-			engine_start_load_delta > ENGINE_LOAD_RISE_SCORE;
-	int dt_ms = (int)(dt * 1000.0f);
-	if (dt_ms < 1) {
-		dt_ms = 1;
-	}
-
-	if (prewarn_cond) {
-		engine_start_load_prewarn_ms = (int)engine_start_load_prewarn_hold_ms;
-	} else if (engine_start_load_prewarn_ms > 0) {
-		engine_start_load_prewarn_ms -= dt_ms;
-		if (engine_start_load_prewarn_ms < 0) {
-			engine_start_load_prewarn_ms = 0;
-		}
-	}
-	engine_start_load_pre_warning = engine_start_load_prewarn_ms > 0;
-
-	bool enter_cond = score_high || compression;
-	bool exit_cond = engine_start_load_score < ENGINE_LOAD_LOW_SCORE &&
-			engine_start_load_delta < ENGINE_LOAD_FALL_SCORE &&
-			!compression;
-
-	if (enter_cond) {
-		high_load_stable_time += dt;
-		high_load_release_time = 0.0f;
-	} else {
-		high_load_stable_time = 0.0f;
-	}
-
-	if (exit_cond) {
-		high_load_release_time += dt;
-	} else {
-		high_load_release_time = 0.0f;
-	}
-
-	if (!engine_start_high_load_latched &&
-			high_load_stable_time >= ((float)ENGINE_HIGH_LOAD_ENTER_MS / 1000.0f)) {
-		engine_start_high_load_latched = true;
-	}
-
-	if (engine_start_high_load_latched &&
-			high_load_release_time >= ((float)ENGINE_HIGH_LOAD_EXIT_MS / 1000.0f)) {
-		engine_start_high_load_latched = false;
-	}
-}
-
-static bool engine_start_high_load(void) {
-	return engine_start_high_load_latched;
-}
-
-static bool engine_start_low_load(void) {
-	return engine_start_load_score <= ENGINE_LOAD_LOW_SCORE &&
-			engine_start_load_delta <= ENGINE_LOAD_FALL_SCORE &&
-			!engine_start_load_pre_warning &&
-			!engine_start_detect_compression() &&
-			!engine_start_high_load_latched;
-}
-
-static bool engine_start_erpm_reached(float target_erpm) {
-	return engine_start_erpm_abs_filt >= (target_erpm - ENGINE_ERPM_REACHED_MARGIN);
-}
-
 static bool engine_start_observer_stable(void) {
 	return engine_start_obs_stable_ms >= engine_start_params.obs_stable_time_ms;
 }
@@ -1519,7 +1237,6 @@ static void engine_start_enter(engine_start_state_t state) {
 	}
 	if (state == ENGINE_START_PULSE) {
 		engine_start_boost_pulse_count++;
-		engine_start_total_pulse_count++;
 		engine_start_boost_current_now = engine_start_select_boost_current();
 		pulse_min_time_counter = 0.0f;
 	}
@@ -1534,7 +1251,6 @@ static void engine_start_enter(engine_start_state_t state) {
 }
 
 static void engine_start_fault(engine_start_stop_reason_t reason) {
-	engine_start_v3v4_record(engine_start_classify_fault(reason));
 	engine_start_stop_output();
 	engine_start_active = false;
 	engine_start_state = ENGINE_START_FAULT;
@@ -1547,310 +1263,6 @@ static float engine_start_select_boost_current(void) {
 	case 2: return engine_start_params.boost_current_2;
 	default: return engine_start_params.boost_current_3;
 	}
-}
-
-static int engine_start_attempt_count_safe(void) {
-	int count = engine_start_attempt_window_count;
-	return count > 0 ? count : 1;
-}
-
-static void engine_start_attempt_count(engine_start_attempt_result_t result, int delta) {
-	switch (result) {
-	case ENGINE_ATTEMPT_COMPRESSION_FAIL:
-		engine_start_v3v4.compression_fail_count += delta;
-		break;
-	case ENGINE_ATTEMPT_STALL_FAIL:
-		engine_start_v3v4.stall_fail_count += delta;
-		break;
-	case ENGINE_ATTEMPT_NO_DRIVE_FAIL:
-		engine_start_v3v4.no_drive_fail_count += delta;
-		break;
-	case ENGINE_ATTEMPT_REBOUND_FAIL:
-		engine_start_v3v4.rebound_fail_count += delta;
-		break;
-	case ENGINE_ATTEMPT_SUCCESS:
-		engine_start_v3v4.success_count += delta;
-		break;
-	default:
-		break;
-	}
-}
-
-static void engine_start_adapt_param(float *param, float target, float min, float max) {
-	utils_truncate_number(&target, min, max);
-	*param += (target - *param) * ENGINE_ADAPTIVE_EMA;
-	utils_truncate_number(param, min, max);
-}
-
-static void engine_start_v4_update(void) {
-	int total = engine_start_attempt_window_count;
-	if (total <= 0) {
-		engine_start_v3v4.stability_score = 0.0f;
-		engine_start_v3v4.state = ENGINE_LEARNING;
-		return;
-	}
-
-	total = engine_start_attempt_count_safe();
-	float inv_total = 1.0f / (float)total;
-	float success_rate = (float)engine_start_v3v4.success_count * inv_total;
-	float stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
-	float compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
-	float rebound_rate = (float)engine_start_v3v4.rebound_fail_count * inv_total;
-	float no_drive_rate = (float)engine_start_v3v4.no_drive_fail_count * inv_total;
-
-	engine_start_v3v4.stability_score = success_rate -
-			0.2f * stall_rate -
-			0.2f * compression_rate -
-			0.1f * rebound_rate -
-			0.1f * no_drive_rate;
-	utils_truncate_number(&engine_start_v3v4.stability_score, 0.0f, 1.0f);
-
-	if (engine_start_v3v4.stability_score > ENGINE_ADAPTIVE_SCORE_LOCK &&
-			engine_start_v3v4.consecutive_success >= ENGINE_ADAPTIVE_SUCCESS_LOCK &&
-			engine_start_v3v4.stall_fail_count == 0) {
-		engine_start_v3v4.state = ENGINE_STABLE_LOCK;
-		engine_start_learning_gain = ENGINE_ADAPTIVE_GAIN_LOCKED;
-	} else if (stall_rate > 0.2f || compression_rate > 0.3f || success_rate < ENGINE_ADAPTIVE_UNLOCK_SUCCESS_RATE) {
-		engine_start_v3v4.state = ENGINE_LEARNING;
-		if (engine_start_learning_gain < ENGINE_ADAPTIVE_GAIN_MIN) {
-			engine_start_learning_gain = ENGINE_ADAPTIVE_GAIN_MIN;
-		}
-	}
-}
-
-static void engine_start_v3_update(engine_start_attempt_result_t result) {
-	float step = ENGINE_ADAPTIVE_STEP * engine_start_learning_gain;
-	switch (result) {
-	case ENGINE_ATTEMPT_COMPRESSION_FAIL:
-		if (engine_start_consecutive_compression_fail >= ENGINE_ADAPTIVE_FAIL_CONFIRM) {
-			engine_start_adapt_param(&engine_start_params.boost_current_1, engine_start_params.boost_current_1 * (1.0f + step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-			engine_start_adapt_param(&engine_start_params.boost_current_2, engine_start_params.boost_current_2 * (1.0f + step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-			engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * (1.0f + step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-			engine_start_adapt_param(&engine_start_load_high_score, engine_start_load_high_score * (1.0f - step), ENGINE_ADAPTIVE_LOAD_HIGH_MIN, ENGINE_ADAPTIVE_LOAD_HIGH_MAX);
-			engine_start_adapt_param(&engine_start_load_delta_deadband, engine_start_load_delta_deadband * (1.0f - step), ENGINE_ADAPTIVE_DEADBAND_MIN, ENGINE_ADAPTIVE_DEADBAND_MAX);
-			engine_start_adapt_param(&engine_start_load_prewarn_hold_ms, engine_start_load_prewarn_hold_ms * (1.0f + step), ENGINE_ADAPTIVE_PREWARN_MIN_MS, ENGINE_ADAPTIVE_PREWARN_MAX_MS);
-			engine_start_consecutive_compression_fail = 0;
-		}
-		break;
-	case ENGINE_ATTEMPT_STALL_FAIL:
-		if (engine_start_consecutive_stall_fail >= ENGINE_ADAPTIVE_FAIL_CONFIRM) {
-			engine_start_adapt_param(&engine_start_params.boost_gap_ms, engine_start_params.boost_gap_ms * (1.0f + step), ENGINE_ADAPTIVE_GAP_MIN_MS, ENGINE_ADAPTIVE_GAP_MAX_MS);
-			engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * (1.0f - step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-			engine_start_adapt_param(&engine_start_load_delta_deadband, engine_start_load_delta_deadband * (1.0f + step), ENGINE_ADAPTIVE_DEADBAND_MIN, ENGINE_ADAPTIVE_DEADBAND_MAX);
-			engine_start_adapt_param(&engine_start_load_prewarn_hold_ms, engine_start_load_prewarn_hold_ms * (1.0f + step), ENGINE_ADAPTIVE_PREWARN_MIN_MS, ENGINE_ADAPTIVE_PREWARN_MAX_MS);
-			engine_start_consecutive_stall_fail = 0;
-		}
-		break;
-	case ENGINE_ATTEMPT_NO_DRIVE_FAIL:
-		if (engine_start_consecutive_no_drive_fail >= ENGINE_ADAPTIVE_FAIL_CONFIRM) {
-			engine_start_adapt_param(&engine_start_params.boost_pulse_ms, engine_start_params.boost_pulse_ms * (1.0f + step), ENGINE_ADAPTIVE_PULSE_MIN_MS, ENGINE_ADAPTIVE_PULSE_MAX_MS);
-			engine_start_adapt_param(&engine_start_params.boost_current_1, engine_start_params.boost_current_1 * (1.0f + step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-			engine_start_adapt_param(&engine_start_load_prewarn_hold_ms, engine_start_load_prewarn_hold_ms * (1.0f - step), ENGINE_ADAPTIVE_PREWARN_MIN_MS, ENGINE_ADAPTIVE_PREWARN_MAX_MS);
-			engine_start_consecutive_no_drive_fail = 0;
-		}
-		break;
-	case ENGINE_ATTEMPT_REBOUND_FAIL:
-		if (engine_start_consecutive_rebound_fail >= ENGINE_ADAPTIVE_FAIL_CONFIRM) {
-			engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * (1.0f - step), ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-			engine_start_adapt_param(&engine_start_params.boost_gap_ms, engine_start_params.boost_gap_ms * (1.0f + step), ENGINE_ADAPTIVE_GAP_MIN_MS, ENGINE_ADAPTIVE_GAP_MAX_MS);
-			engine_start_adapt_param(&engine_start_load_delta_deadband, engine_start_load_delta_deadband * (1.0f + step), ENGINE_ADAPTIVE_DEADBAND_MIN, ENGINE_ADAPTIVE_DEADBAND_MAX);
-			engine_start_consecutive_rebound_fail = 0;
-		}
-		break;
-	case ENGINE_ATTEMPT_SUCCESS:
-		engine_start_learning_gain *= ENGINE_ADAPTIVE_GAIN_DECAY;
-		utils_truncate_number(&engine_start_learning_gain, ENGINE_ADAPTIVE_GAIN_MIN, ENGINE_ADAPTIVE_GAIN_MAX);
-		break;
-	default:
-		break;
-	}
-}
-
-static engine_start_attempt_result_t engine_start_classify_fault(engine_start_stop_reason_t reason) {
-	switch (reason) {
-	case ENGINE_STOP_MAX_RETRY:
-	case ENGINE_STOP_STALL:
-		return ENGINE_ATTEMPT_STALL_FAIL;
-	case ENGINE_STOP_MAX_PULSES:
-		return ENGINE_ATTEMPT_COMPRESSION_FAIL;
-	case ENGINE_STOP_TIMEOUT:
-		return engine_start_total_pulse_count == 0 ? ENGINE_ATTEMPT_NO_DRIVE_FAIL : ENGINE_ATTEMPT_COMPRESSION_FAIL;
-	case ENGINE_STOP_OVERCURRENT:
-		return ENGINE_ATTEMPT_REBOUND_FAIL;
-	default:
-		return ENGINE_ATTEMPT_NONE;
-	}
-}
-
-static void engine_start_v3v4_record(engine_start_attempt_result_t result) {
-	if (result == ENGINE_ATTEMPT_NONE || engine_start_attempt_recorded) {
-		return;
-	}
-	engine_start_attempt_recorded = true;
-
-	int elapsed_ms = engine_start_elapsed_ms(engine_start_global_timer);
-	if (engine_start_attempt_window_count >= ENGINE_ADAPTIVE_WINDOW) {
-		engine_start_attempt_count(engine_start_attempt_window[engine_start_attempt_window_pos], -1);
-		engine_start_attempt_time_sum_ms -= engine_start_attempt_time_window[engine_start_attempt_window_pos];
-	} else {
-		engine_start_attempt_window_count++;
-	}
-
-	engine_start_attempt_time_window[engine_start_attempt_window_pos] = elapsed_ms;
-	engine_start_attempt_time_sum_ms += elapsed_ms;
-	engine_start_strategy_attempts_since_switch++;
-
-	engine_start_attempt_window[engine_start_attempt_window_pos] = result;
-	engine_start_attempt_window_pos = (engine_start_attempt_window_pos + 1) % ENGINE_ADAPTIVE_WINDOW;
-	engine_start_attempt_count(result, 1);
-
-	if (result == ENGINE_ATTEMPT_SUCCESS) {
-		engine_start_v3v4.consecutive_success++;
-		engine_start_consecutive_compression_fail = 0;
-		engine_start_consecutive_stall_fail = 0;
-		engine_start_consecutive_no_drive_fail = 0;
-		engine_start_consecutive_rebound_fail = 0;
-	} else {
-		engine_start_v3v4.consecutive_success = 0;
-		engine_start_consecutive_compression_fail = result == ENGINE_ATTEMPT_COMPRESSION_FAIL ? engine_start_consecutive_compression_fail + 1 : 0;
-		engine_start_consecutive_stall_fail = result == ENGINE_ATTEMPT_STALL_FAIL ? engine_start_consecutive_stall_fail + 1 : 0;
-		engine_start_consecutive_no_drive_fail = result == ENGINE_ATTEMPT_NO_DRIVE_FAIL ? engine_start_consecutive_no_drive_fail + 1 : 0;
-		engine_start_consecutive_rebound_fail = result == ENGINE_ATTEMPT_REBOUND_FAIL ? engine_start_consecutive_rebound_fail + 1 : 0;
-	}
-
-	engine_start_v4_update();
-	engine_start_v3_update(result);
-	engine_start_v4_update();
-	if (engine_start_v3v4.state == ENGINE_STABLE_LOCK && !engine_start_knowledge_saved_for_lock) {
-		engine_start_v6_save_knowledge();
-		engine_start_knowledge_saved_for_lock = true;
-	} else if (engine_start_v3v4.state == ENGINE_LEARNING) {
-		engine_start_knowledge_saved_for_lock = false;
-	}
-}
-
-
-static void engine_start_v5_apply_strategy(engine_strategy_t strategy) {
-	if (strategy == ENGINE_STRATEGY_COLD_START) {
-		engine_start_adapt_param(&engine_start_params.boost_current_1, engine_start_params.boost_current_1 * 1.03f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-		engine_start_adapt_param(&engine_start_params.boost_current_2, engine_start_params.boost_current_2 * 1.03f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-		engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * 1.03f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-		engine_start_adapt_param(&engine_start_params.boost_gap_ms, engine_start_params.boost_gap_ms * 1.03f, ENGINE_ADAPTIVE_GAP_MIN_MS, ENGINE_ADAPTIVE_GAP_MAX_MS);
-		engine_start_adapt_param(&engine_start_params.boost_pulse_ms, engine_start_params.boost_pulse_ms * 1.03f, ENGINE_ADAPTIVE_PULSE_MIN_MS, ENGINE_ADAPTIVE_PULSE_MAX_MS);
-	} else if (strategy == ENGINE_STRATEGY_HOT_START) {
-		engine_start_adapt_param(&engine_start_params.boost_current_1, engine_start_params.boost_current_1 * 0.97f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-		engine_start_adapt_param(&engine_start_params.boost_current_2, engine_start_params.boost_current_2 * 0.97f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-		engine_start_adapt_param(&engine_start_params.boost_current_3, engine_start_params.boost_current_3 * 0.97f, ENGINE_ADAPTIVE_CURRENT_MIN, ENGINE_ADAPTIVE_CURRENT_MAX);
-		engine_start_adapt_param(&engine_start_params.boost_gap_ms, engine_start_params.boost_gap_ms * 0.97f, ENGINE_ADAPTIVE_GAP_MIN_MS, ENGINE_ADAPTIVE_GAP_MAX_MS);
-		engine_start_adapt_param(&engine_start_params.boost_pulse_ms, engine_start_params.boost_pulse_ms * 0.97f, ENGINE_ADAPTIVE_PULSE_MIN_MS, ENGINE_ADAPTIVE_PULSE_MAX_MS);
-	}
-}
-
-static void engine_start_v5_select_strategy(void) {
-	if (engine_start_attempt_window_count <= 0 ||
-			engine_start_strategy_attempts_since_switch < ENGINE_STRATEGY_SWITCH_CONFIRM) {
-		return;
-	}
-
-	int total = engine_start_attempt_count_safe();
-	float inv_total = 1.0f / (float)total;
-	float success_rate = (float)engine_start_v3v4.success_count * inv_total;
-	float stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
-	float compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
-	float rebound_rate = (float)engine_start_v3v4.rebound_fail_count * inv_total;
-	float avg_start_time = (float)engine_start_attempt_time_sum_ms * inv_total;
-	engine_strategy_t next = ENGINE_STRATEGY_NORMAL_START;
-
-	if (stall_rate > ENGINE_STRATEGY_COLD_RATE || compression_rate > ENGINE_STRATEGY_COLD_RATE) {
-		next = ENGINE_STRATEGY_COLD_START;
-	} else if (success_rate > ENGINE_STRATEGY_STABLE_RATE &&
-			stall_rate <= 0.0f && compression_rate <= 0.0f && rebound_rate <= 0.0f &&
-			avg_start_time > 0.0f && avg_start_time < ENGINE_STRATEGY_FAST_START_MS) {
-		next = ENGINE_STRATEGY_HOT_START;
-	}
-
-	if (next != engine_start_strategy) {
-		engine_start_strategy = next;
-		engine_start_strategy_attempts_since_switch = 0;
-		engine_start_v5_apply_strategy(next);
-	}
-}
-
-static float engine_start_v6_similarity(const engine_start_knowledge_t *knowledge) {
-	if (!knowledge || engine_start_attempt_window_count <= 0) {
-		return 1.0e9f;
-	}
-	int total = engine_start_attempt_count_safe();
-	float inv_total = 1.0f / (float)total;
-	float stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
-	float compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
-	float rebound_rate = (float)engine_start_v3v4.rebound_fail_count * inv_total;
-	float avg_start_time = (float)engine_start_attempt_time_sum_ms * inv_total;
-	return fabsf(stall_rate - knowledge->engine_signature_stall_rate) +
-			fabsf(compression_rate - knowledge->engine_signature_compression_rate) +
-			fabsf(rebound_rate - knowledge->engine_signature_rebound_rate) +
-			fabsf((avg_start_time - knowledge->engine_signature_avg_start_time) / 5000.0f);
-}
-
-static void engine_start_v6_save_knowledge(void) {
-	if (engine_start_attempt_window_count <= 0) {
-		return;
-	}
-	int total = engine_start_attempt_count_safe();
-	float inv_total = 1.0f / (float)total;
-	engine_start_knowledge_t *knowledge = &engine_start_knowledge[engine_start_knowledge_pos];
-	knowledge->engine_signature_stall_rate = (float)engine_start_v3v4.stall_fail_count * inv_total;
-	knowledge->engine_signature_compression_rate = (float)engine_start_v3v4.compression_fail_count * inv_total;
-	knowledge->engine_signature_rebound_rate = (float)engine_start_v3v4.rebound_fail_count * inv_total;
-	knowledge->engine_signature_avg_start_time = (float)engine_start_attempt_time_sum_ms * inv_total;
-	knowledge->best_boost_current_1 = engine_start_params.boost_current_1;
-	knowledge->best_boost_current_2 = engine_start_params.boost_current_2;
-	knowledge->best_boost_current_3 = engine_start_params.boost_current_3;
-	knowledge->best_gap_time = engine_start_params.boost_gap_ms;
-	knowledge->best_pulse_time = engine_start_params.boost_pulse_ms;
-	knowledge->best_strategy = engine_start_strategy;
-	engine_start_knowledge_pos = (engine_start_knowledge_pos + 1) % ENGINE_KNOWLEDGE_MAX;
-	if (engine_start_knowledge_count < ENGINE_KNOWLEDGE_MAX) {
-		engine_start_knowledge_count++;
-	}
-}
-
-
-static bool engine_start_pull_stall_ignore_active(bool stall) {
-	return stall &&
-			engine_start_state == ENGINE_START_PULL &&
-			engine_start_elapsed_ms(engine_start_timer) < engine_start_params.pull_stall_ignore_ms;
-}
-
-static bool engine_start_v6_preload_knowledge(void) {
-	engine_start_v6_confidence = 0.0f;
-	if (engine_start_knowledge_count <= 0) {
-		return false;
-	}
-	int best_ind = 0;
-	float best_similarity = engine_start_v6_similarity(&engine_start_knowledge[0]);
-	for (int i = 1;i < engine_start_knowledge_count;i++) {
-		float similarity = engine_start_v6_similarity(&engine_start_knowledge[i]);
-		if (similarity < best_similarity) {
-			best_similarity = similarity;
-			best_ind = i;
-		}
-	}
-
-	engine_start_v6_confidence = 1.0f / (1.0f + best_similarity);
-	utils_truncate_number(&engine_start_v6_confidence, ENGINE_KNOWLEDGE_CONFIDENCE_FLOOR, ENGINE_KNOWLEDGE_CONFIDENCE_CEIL);
-	if (engine_start_v6_confidence < ENGINE_KNOWLEDGE_CONFIDENCE_MIN) {
-		return false;
-	}
-
-	const engine_start_knowledge_t *knowledge = &engine_start_knowledge[best_ind];
-	engine_start_params.boost_current_1 = knowledge->best_boost_current_1;
-	engine_start_params.boost_current_2 = knowledge->best_boost_current_2;
-	engine_start_params.boost_current_3 = knowledge->best_boost_current_3;
-	engine_start_params.boost_gap_ms = knowledge->best_gap_time;
-	engine_start_params.boost_pulse_ms = knowledge->best_pulse_time;
-	engine_start_strategy = knowledge->best_strategy;
-	return true;
 }
 
 static void engine_start_update(float dt) {
