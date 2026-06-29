@@ -40,6 +40,8 @@
       (progn
         (print "status=")
         ; Returns (state event-state event-confidence fault-reason active)
+        ; State map: 0 IDLE, 1 ALIGN, 2 PULL, 3 LOAD_DETECT,
+        ; 4 PULSE, 5 GAP, 6 BACKOFF, 7 ACCEL, 8 BLEND, 9 RUN, 10 FAULT.
         (print (engine-status))
         (sleep (/ delay-ms 1000.0))
         (es-monitor (- n 1) delay-ms))))

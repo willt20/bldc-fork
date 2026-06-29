@@ -33,6 +33,24 @@ The active layers are:
    * `BACKOFF`
    * `FAULT`
 
+## State number map
+
+The state enum was renumbered when the old preload/recover/retry states were removed. Use this table when reading `(engine-status)` or `engine_status` output:
+
+| Number | State |
+|---:|---|
+| 0 | `IDLE` |
+| 1 | `ALIGN` |
+| 2 | `PULL` |
+| 3 | `LOAD_DETECT` |
+| 4 | `PULSE` |
+| 5 | `GAP` |
+| 6 | `BACKOFF` |
+| 7 | `ACCEL` |
+| 8 | `BLEND` |
+| 9 | `RUN` |
+| 10 | `FAULT` |
+
 ## PULL event wait mode
 
 `PULL` no longer uses stall ERPM/current/duty to enter `BACKOFF`. It waits for robust events:

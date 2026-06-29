@@ -1143,14 +1143,23 @@ __attribute__((section(".text2"))) void terminal_process_string(char *str) {
 				"NONE", "USER", "TIMEOUT", "UNDERVOLTAGE", "FAULT",
 				"MAX_RETRY", "MAX_PULSES", "STALL", "OVERCURRENT"
 			};
+			static const char *engine_state_names[] = {
+				"IDLE", "ALIGN", "PULL", "LOAD_DETECT", "PULSE",
+				"GAP", "BACKOFF", "ACCEL", "BLEND", "RUN", "FAULT"
+			};
 			const char *stop_reason_name = "UNKNOWN";
+			const char *engine_state_name = "UNKNOWN";
 			if (status.last_stop_reason >= 0 &&
 					status.last_stop_reason < (int)(sizeof(stop_reason_names) / sizeof(stop_reason_names[0]))) {
 				stop_reason_name = stop_reason_names[status.last_stop_reason];
 			}
+			if (status.state >= 0 &&
+					status.state < (int)(sizeof(engine_state_names) / sizeof(engine_state_names[0]))) {
+				engine_state_name = engine_state_names[status.state];
+			}
 
 			commands_printf("Engine start active      : %s", status.active ? "true" : "false");
-			commands_printf("Engine start state       : %d", status.state);
+			commands_printf("Engine start state       : %s (%d)", engine_state_name, status.state);
 			commands_printf("Engine event state       : %d", status.event_state);
 			commands_printf("Engine event confidence  : %.3f", (double)status.event_confidence);
 			commands_printf("Engine fault/stop reason : %s (%d)", stop_reason_name, status.last_stop_reason);
