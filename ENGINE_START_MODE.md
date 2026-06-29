@@ -19,7 +19,7 @@ The active layers are:
    * `event_confidence` in the range `0.0..1.0`
    * two-sample debounce
    * state locking through the existing Engine Start state machine
-   * watchdog timeout through `event-timeout-ms`
+   * separate watchdogs through `pull-event-timeout-ms` and `pulse-event-timeout-ms`
 
 3. **State Machine Execution**
    * `ALIGN`
@@ -40,7 +40,7 @@ The active layers are:
 * `ENTER_COMPRESSION` with confidence above threshold enters `PULSE`.
 * `PEAK_REACHED` enters `ACCEL`.
 * `RELEASE` enters `ACCEL` or `BLEND` if the observer is already stable.
-* No event for longer than `event-timeout-ms` enters `BACKOFF`, which faults with timeout.
+* No event for longer than `pull-event-timeout-ms` enters `BACKOFF`, which faults with timeout. PULSE/GAP use the much shorter `pulse-event-timeout-ms` safety watchdog.
 
 ## Runtime parameters
 
@@ -57,7 +57,8 @@ Only the minimal runtime parameter set is exposed to Lisp/terminal parameter API
 | `min-vin` | Minimum input voltage for Engine Start. |
 | `max-start-time-ms` | Safety watchdog for the full start attempt. |
 | `event-confidence-threshold` | Default `0.65`; event confidence needed to accept an event. |
-| `event-timeout-ms` | Default `800`; no-event watchdog. |
+| `pull-event-timeout-ms` | Default `500`; PULL/LOAD_DETECT no-event watchdog. |
+| `pulse-event-timeout-ms` | Default `15`; PULSE/GAP safety watchdog. |
 | `preload-enable` | Kept for interface compatibility only. Reverse preload control logic is disabled. |
 
 ## Lisp usage
@@ -70,7 +71,8 @@ Only the minimal runtime parameter set is exposed to Lisp/terminal parameter API
 (engine-param-set 'boost-current-3 40.0)
 (engine-param-set 'accel-current 15.0)
 (engine-param-set 'event-confidence-threshold 0.65)
-(engine-param-set 'event-timeout-ms 800)
+(engine-param-set 'pull-event-timeout-ms 500)
+(engine-param-set 'pulse-event-timeout-ms 15)
 (engine-start)
 (engine-status)
 (engine-stop)

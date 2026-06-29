@@ -81,7 +81,8 @@
 #define ENGINE_MAX_TOTAL_PULSES    9
 #define ENGINE_MIN_VIN             24.0f
 #define ENGINE_EVENT_CONFIDENCE_THRESHOLD 0.65f
-#define ENGINE_EVENT_TIMEOUT_MS    800.0f
+#define ENGINE_PULL_EVENT_TIMEOUT_MS 500.0f
+#define ENGINE_PULSE_EVENT_TIMEOUT_MS 15.0f
 #define ENGINE_STALL_ERPM          300.0f
 #define ENGINE_STALL_CURRENT       100.0f
 #define ENGINE_STALL_DUTY          0.12f
@@ -223,7 +224,8 @@ typedef struct {
 	float preload_settle_ms;
 	float pull_stall_ignore_ms;
 	float event_confidence_threshold;
-	float event_timeout_ms;
+	float pull_event_timeout_ms;
+	float pulse_event_timeout_ms;
 } engine_start_params_t;
 
 typedef enum {
@@ -401,7 +403,8 @@ static engine_start_params_t engine_start_params = {
 	.preload_settle_ms = ENGINE_PRELOAD_SETTLE_MS,
 	.pull_stall_ignore_ms = ENGINE_PULL_STALL_IGNORE_MS,
 	.event_confidence_threshold = ENGINE_EVENT_CONFIDENCE_THRESHOLD,
-	.event_timeout_ms = ENGINE_EVENT_TIMEOUT_MS
+	.pull_event_timeout_ms = ENGINE_PULL_EVENT_TIMEOUT_MS,
+	.pulse_event_timeout_ms = ENGINE_PULSE_EVENT_TIMEOUT_MS
 };
 #endif
 
@@ -1165,7 +1168,8 @@ static void engine_start_params_load_defaults(void) {
 	engine_start_params.preload_settle_ms = ENGINE_PRELOAD_SETTLE_MS;
 	engine_start_params.pull_stall_ignore_ms = ENGINE_PULL_STALL_IGNORE_MS;
 	engine_start_params.event_confidence_threshold = ENGINE_EVENT_CONFIDENCE_THRESHOLD;
-	engine_start_params.event_timeout_ms = ENGINE_EVENT_TIMEOUT_MS;
+	engine_start_params.pull_event_timeout_ms = ENGINE_PULL_EVENT_TIMEOUT_MS;
+	engine_start_params.pulse_event_timeout_ms = ENGINE_PULSE_EVENT_TIMEOUT_MS;
 	engine_start_load_high_score = ENGINE_LOAD_HIGH_SCORE;
 	engine_start_load_delta_deadband = ENGINE_LOAD_DELTA_DEADBAND;
 	engine_start_load_prewarn_hold_ms = ENGINE_LOAD_PREWARN_HOLD_MS;
@@ -1183,7 +1187,8 @@ static float *engine_start_param_ptr(engine_start_param_id_t param) {
 	case ENGINE_START_PARAM_MAX_START_TIME_MS: return &engine_start_params.max_start_time_ms;
 	case ENGINE_START_PARAM_MIN_VIN: return &engine_start_params.min_vin;
 	case ENGINE_START_PARAM_EVENT_CONFIDENCE_THRESHOLD: return &engine_start_params.event_confidence_threshold;
-	case ENGINE_START_PARAM_EVENT_TIMEOUT_MS: return &engine_start_params.event_timeout_ms;
+	case ENGINE_START_PARAM_PULL_EVENT_TIMEOUT_MS: return &engine_start_params.pull_event_timeout_ms;
+	case ENGINE_START_PARAM_PULSE_EVENT_TIMEOUT_MS: return &engine_start_params.pulse_event_timeout_ms;
 	case ENGINE_START_PARAM_PRELOAD_ENABLE: return &engine_start_params.preload_enable;
 	default: return 0;
 	}
@@ -1200,7 +1205,8 @@ static bool engine_start_param_valid(engine_start_param_id_t param, float value)
 	case ENGINE_START_PARAM_EVENT_CONFIDENCE_THRESHOLD:
 		return value >= 0.0f && value <= 1.0f;
 	case ENGINE_START_PARAM_MAX_START_TIME_MS:
-	case ENGINE_START_PARAM_EVENT_TIMEOUT_MS:
+	case ENGINE_START_PARAM_PULL_EVENT_TIMEOUT_MS:
+	case ENGINE_START_PARAM_PULSE_EVENT_TIMEOUT_MS:
 		return value > 0.0f;
 	default:
 		return value >= 0.0f;
@@ -1902,7 +1908,7 @@ static void engine_start_update(float dt) {
 			engine_start_enter(ENGINE_START_ACCEL);
 		} else if (engine_start_event_state == ENGINE_EVENT_RELEASE) {
 			engine_start_enter(engine_start_observer_stable() ? ENGINE_START_BLEND : ENGINE_START_ACCEL);
-		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.event_timeout_ms) {
+		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.pull_event_timeout_ms) {
 			engine_start_enter(ENGINE_START_BACKOFF);
 		}
 		break;
@@ -1914,7 +1920,7 @@ static void engine_start_update(float dt) {
 		} else if (engine_start_event_state == ENGINE_EVENT_PEAK_REACHED ||
 				engine_start_event_state == ENGINE_EVENT_RELEASE) {
 			engine_start_enter(ENGINE_START_ACCEL);
-		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.event_timeout_ms) {
+		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.pull_event_timeout_ms) {
 			engine_start_enter(ENGINE_START_BACKOFF);
 		} else {
 			engine_start_enter(ENGINE_START_PULL);
@@ -1928,7 +1934,7 @@ static void engine_start_update(float dt) {
 			engine_start_enter(ENGINE_START_GAP);
 		} else if (engine_start_event_state == ENGINE_EVENT_RELEASE) {
 			engine_start_enter(ENGINE_START_ACCEL);
-		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.event_timeout_ms) {
+		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.pulse_event_timeout_ms) {
 			engine_start_enter(ENGINE_START_BACKOFF);
 		}
 		break;
@@ -1940,7 +1946,7 @@ static void engine_start_update(float dt) {
 			engine_start_enter(ENGINE_START_ACCEL);
 		} else if (engine_start_event_state == ENGINE_EVENT_ENTER_COMPRESSION) {
 			engine_start_enter(ENGINE_START_PULSE);
-		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.event_timeout_ms) {
+		} else if (engine_start_elapsed_ms(engine_start_timer) >= engine_start_params.pulse_event_timeout_ms) {
 			engine_start_enter(ENGINE_START_BACKOFF);
 		}
 		break;

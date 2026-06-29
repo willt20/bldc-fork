@@ -11,7 +11,8 @@
   (engine-param-set 'min-vin 24.0)
   (engine-param-set 'max-start-time-ms 3000.0)
   (engine-param-set 'event-confidence-threshold 0.65)
-  (engine-param-set 'event-timeout-ms 800.0)
+  (engine-param-set 'pull-event-timeout-ms 500.0)
+  (engine-param-set 'pulse-event-timeout-ms 15.0)
   ; Interface compatibility only. Reverse preload logic is disabled in ES-FINAL.
   (engine-param-set 'preload-enable 0.0))
 
@@ -30,7 +31,8 @@
   (es-print-param 'min-vin)
   (es-print-param 'max-start-time-ms)
   (es-print-param 'event-confidence-threshold)
-  (es-print-param 'event-timeout-ms)
+  (es-print-param 'pull-event-timeout-ms)
+  (es-print-param 'pulse-event-timeout-ms)
   (es-print-param 'preload-enable))
 
 (defun es-monitor (n delay-ms)

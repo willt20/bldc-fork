@@ -1889,7 +1889,8 @@ static char *engine_start_param_names[ENGINE_START_PARAM_NUM] = {
 	"min-vin",
 	"max-start-time-ms",
 	"event-confidence-threshold",
-	"event-timeout-ms",
+	"pull-event-timeout-ms",
+	"pulse-event-timeout-ms",
 	"preload-enable"
 };
 static lbm_uint engine_start_param_syms[ENGINE_START_PARAM_NUM];
