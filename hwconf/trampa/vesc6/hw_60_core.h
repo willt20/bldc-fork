@@ -198,10 +198,10 @@
 #define V_REG					3.3
 #endif
 #ifndef VIN_R1
-#define VIN_R1					39000.0
+#define VIN_R1					59000.0
 #endif
 #ifndef VIN_R2
-#define VIN_R2					2200.0
+#define VIN_R2					1000.0
 #endif
 #ifndef CURRENT_AMP_GAIN
 #define CURRENT_AMP_GAIN		20.0
@@ -257,10 +257,10 @@
 // Permanent UART Peripheral (for NRF51)
 #define HW_UART_P_BAUD			115200
 #define HW_UART_P_DEV			SD4
-#define HW_UART_P_DEV_TX		SD5 // UART for TX, due to mistake below
+//#define HW_UART_P_DEV_TX		SD5 // UART for TX, due to mistake below
 #define HW_UART_P_GPIO_AF		GPIO_AF_UART4
 #define HW_UART_P_TX_PORT		GPIOC
-#define HW_UART_P_TX_PIN		12 // This is a mistake in the HW. We have to use a hack to use UART5.
+#define HW_UART_P_TX_PIN		10 // This is a mistake in the HW. We have to use a hack to use UART5.
 #define HW_UART_P_RX_PORT		GPIOC
 #define HW_UART_P_RX_PIN		11
 #endif
@@ -405,6 +405,11 @@
 #define READ_HALL2()			palReadPad(HW_HALL_ENC_GPIO2, HW_HALL_ENC_PIN2)
 #define READ_HALL3()			palReadPad(HW_HALL_ENC_GPIO3, HW_HALL_ENC_PIN3)
 
+// Override dead time. See the stm32f4 reference manual for calculating this value.
+#define HW_DEAD_TIME_NSEC		360.0
+
+//#define INVERTED_TOP_DRIVER_INPUT
+//#define INVERTED_BOTTOM_DRIVER_INPUT
 // Default setting overrides
 #ifndef MCCONF_DEFAULT_MOTOR_TYPE
 #define MCCONF_DEFAULT_MOTOR_TYPE		MOTOR_TYPE_FOC
@@ -415,8 +420,43 @@
 #ifndef MCCONF_L_MAX_ABS_CURRENT
 #define MCCONF_L_MAX_ABS_CURRENT		150.0	// The maximum absolute current above which a fault is generated
 #endif
-#ifndef MCCONF_FOC_SAMPLE_V0_V7
-#define MCCONF_FOC_SAMPLE_V0_V7			false	// Run control loop in both v0 and v7 (requires phase shunts)
+#ifndef MCCONF_FOC_CONTROL_SAMPLE_MODE
+#define MCCONF_FOC_CONTROL_SAMPLE_MODE	 	FOC_CONTROL_SAMPLE_MODE_V0_V7_INTERPOL  // FOC_CONTROL_SAMPLE_MODE_V0
+//#define MCCONF_FOC_CONTROL_SAMPLE_MODE	 	FOC_CONTROL_SAMPLE_MODE_V0
+#endif
+
+#ifndef MCCONF_FOC_CURRENT_SAMPLE_MODE
+#define MCCONF_FOC_CURRENT_SAMPLE_MODE	FOC_CURRENT_SAMPLE_MODE_ALL_SENSORS
+#endif
+#ifndef MCCONF_FOC_OBSERVER_TYPE
+#define MCCONF_FOC_OBSERVER_TYPE		FOC_OBSERVER_ORTEGA_ORIGINAL // Position observer type for FOC
+#endif
+#ifndef MCCONF_BMS_TYPE
+#define MCCONF_BMS_TYPE					BMS_TYPE_NONE
+#endif
+#ifndef MCCONF_M_MOTOR_TEMP_SENS_TYPE
+#define MCCONF_M_MOTOR_TEMP_SENS_TYPE	TEMP_SENSOR_DISABLED // Motor temperature sensor type
+#endif
+#ifndef MCCONF_P_PID_ANG_DIV
+#define MCCONF_P_PID_ANG_DIV			21.0		// Divide angle by this value
+#endif
+#ifndef MCCONF_S_PID_RAMP_ERPMS_S
+#define MCCONF_S_PID_RAMP_ERPMS_S		20000.0	// Speed input ramping, in ERPM/s
+#endif
+#ifndef MCCONF_FOC_PHASE_FILTER_ENABLE
+#define MCCONF_FOC_PHASE_FILTER_ENABLE	false // Use phase voltage filters when available
+#endif
+//#ifndef MCCONF_FOC_OFFSETS_CAL_ON_BOOT
+//#define MCCONF_FOC_OFFSETS_CAL_ON_BOOT	false // Measure offsets every boot
+//#endif
+#ifndef MCCONF_FOC_OFFSETS_CAL_MODE
+#define MCCONF_FOC_OFFSETS_CAL_MODE		false // Offset calibration mode
+#endif
+#ifndef APPCONF_IMU_TYPE
+#define APPCONF_IMU_TYPE					IMU_TYPE_OFF
+#endif
+#ifndef APPCONF_IMU_USE_MAGNETOMETER
+#define APPCONF_IMU_USE_MAGNETOMETER		false
 #endif
 
 // Setting limits
